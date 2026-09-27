@@ -116,9 +116,9 @@ def update_transaction(
     repo.update_transaction(transaction_id, data)
 
 
-def list_transactions(filters: dict | None = None) -> list[dict]:
+def list_transactions(filters: dict | None = None, limit: int | None = None) -> list[dict]:
     """카테고리/거래처/업무유형 이름까지 포함해 조회한다. filters는 DB 쿼리 조건으로 처리된다."""
-    return repo.get_transactions(filters)
+    return repo.get_transactions(filters, limit=limit)
 
 
 def get_summary(filters: dict | None = None) -> dict:

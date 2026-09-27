@@ -50,3 +50,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (transaction_da
 CREATE INDEX IF NOT EXISTS idx_transactions_client ON transactions (client_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions (category_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_dedup ON transactions (transaction_date, amount, balance);
+-- 3단계(대시보드) 추가: 거래처 필터와 동일한 이유로 업무유형 필터/집계도 자주 사용됨
+CREATE INDEX IF NOT EXISTS idx_transactions_work_type ON transactions (work_type_id);
+-- 대시보드의 KPI/월별추이/카테고리·업무유형 집계는 대부분
+-- "기간 + 수입|지출 구분"으로 필터링하므로 복합 인덱스로 함께 최적화한다.
+CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON transactions (transaction_type, transaction_date);

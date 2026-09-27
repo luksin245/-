@@ -104,10 +104,11 @@ def delete_transaction(transaction_id: int) -> None:
         conn.close()
 
 
-def get_transactions(filters: dict | None = None) -> list[dict]:
+def get_transactions(filters: dict | None = None, limit: int | None = None) -> list[dict]:
     """카테고리/거래처/업무유형 이름까지 JOIN하여 조회한다.
 
     기본 정렬: 거래일자 내림차순 -> 거래시간 내림차순 -> id 내림차순.
+    limit을 주면 DB 쿼리 단계에서 앞의 N건만 가져온다 (예: 대시보드 최근 거래).
     """
     where_sql, params = _build_filter_clause(filters)
     conn = get_connection()
@@ -123,6 +124,9 @@ def get_transactions(filters: dict | None = None) -> list[dict]:
             {where_sql}
             ORDER BY t.transaction_date DESC, t.transaction_time DESC, t.id DESC
         """
+        if limit is not None:
+            query += " LIMIT ?"
+            params = [*params, limit]
         rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -130,7 +134,7 @@ def get_transactions(filters: dict | None = None) -> list[dict]:
 
 
 def get_transaction_summary(filters: dict | None = None) -> dict:
-    """현재 필터 조건 기준 조회건수/총수입/총지출을 DB에서 집계한다."""
+    """현재 필터 조건 기준 조회건수/총수입/총지출/수입건수/지출건수를 DB에서 집계한다."""
     where_sql, params = _build_filter_clause(filters)
     conn = get_connection()
     try:
@@ -138,7 +142,9 @@ def get_transaction_summary(filters: dict | None = None) -> dict:
             SELECT
                 COUNT(*) AS count,
                 COALESCE(SUM(CASE WHEN t.transaction_type = 'income' THEN t.amount ELSE 0 END), 0) AS total_income,
-                COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expense
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expense,
+                COUNT(CASE WHEN t.transaction_type = 'income' THEN 1 END) AS income_count,
+                COUNT(CASE WHEN t.transaction_type = 'expense' THEN 1 END) AS expense_count
             FROM transactions t
             {where_sql}
         """
