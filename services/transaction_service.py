@@ -6,7 +6,7 @@ UI는 이 모듈의 함수만 호출한다. DB 접근은 db.transaction_reposito
 """
 from datetime import datetime
 
-from db import category_repository
+from db import category_repository, client_repository, work_type_repository
 from db import transaction_repository as repo
 from utils.validators import ValidationError, validate_transaction_input
 
@@ -17,11 +17,14 @@ DEFAULT_VAT_STATUS = "불명"
 DEFAULT_EVIDENCE_STATUS = "확인필요"
 
 
-def _validate_category_matches_type(category_id: int | None, transaction_type: str) -> None:
+def _validate_category_matches_type(
+    category_id: int | None, transaction_type: str, unchanged: bool
+) -> None:
     """income 거래에는 income 카테고리만, expense 거래에는 expense 카테고리만 허용한다.
 
-    UI에서도 선택지를 걸러주지만, 잘못된 조합이 DB에 저장되지 않도록
-    service 계층에서 다시 한 번 검증한다.
+    비활성화된 카테고리는 새로 지정할 수 없다. 다만 기존 거래에 이미 설정되어
+    있던 값을 그대로 두는 경우(unchanged=True)는 예외로 허용한다 - 그래야
+    과거에 쓰던 카테고리를 나중에 비활성화해도 기존 거래가 깨지지 않는다.
     """
     if category_id is None:
         return
@@ -30,6 +33,28 @@ def _validate_category_matches_type(category_id: int | None, transaction_type: s
         raise ValidationError("존재하지 않는 카테고리입니다.")
     if category["type"] != transaction_type:
         raise ValidationError("수입/지출 구분과 카테고리 종류가 일치하지 않습니다.")
+    if not unchanged and not category["is_active"]:
+        raise ValidationError("비활성화된 카테고리입니다. 다른 카테고리를 선택해주세요.")
+
+
+def _validate_client_reference(client_id: int | None, unchanged: bool) -> None:
+    if client_id is None:
+        return
+    client = client_repository.get_client_by_id(client_id)
+    if client is None:
+        raise ValidationError("존재하지 않는 거래처입니다.")
+    if not unchanged and not client["is_active"]:
+        raise ValidationError("비활성화된 거래처입니다. 다른 거래처를 선택해주세요.")
+
+
+def _validate_work_type_reference(work_type_id: int | None, unchanged: bool) -> None:
+    if work_type_id is None:
+        return
+    work_type = work_type_repository.get_work_type_by_id(work_type_id)
+    if work_type is None:
+        raise ValidationError("존재하지 않는 업무유형입니다.")
+    if not unchanged and not work_type["is_active"]:
+        raise ValidationError("비활성화된 업무유형입니다. 다른 업무유형을 선택해주세요.")
 
 
 def create_transaction(
@@ -64,7 +89,10 @@ def create_transaction(
     }
 
     validate_transaction_input(data)
-    _validate_category_matches_type(category_id, transaction_type)
+    # 신규 등록에서는 비활성화된 기준정보를 새로 지정하는 것을 항상 막는다 (unchanged=False).
+    _validate_category_matches_type(category_id, transaction_type, unchanged=False)
+    _validate_client_reference(client_id, unchanged=False)
+    _validate_work_type_reference(work_type_id, unchanged=False)
 
     now = datetime.now().isoformat(timespec="seconds")
     data["created_at"] = now
@@ -93,7 +121,15 @@ def update_transaction(
     거래 유형(수입/지출)이 바뀌면서 기존 카테고리가 새 유형과 맞지 않는 경우,
     호출하는 쪽(UI)에서 category_id를 None으로 비워서 넘겨야 한다.
     이 함수는 그 조합이 실수로 넘어와도 다시 한 번 걸러낸다.
+
+    category_id/client_id/work_type_id가 원래 거래에 이미 설정돼 있던 값과
+    동일하면(수정하지 않고 그대로 둔 경우) 비활성 상태여도 허용한다.
+    값을 실제로 "새로" 바꾸는 경우에만 활성 상태를 요구한다.
     """
+    original = repo.get_transaction_by_id(transaction_id)
+    if original is None:
+        raise ValidationError("존재하지 않는 거래입니다.")
+
     data = {
         "transaction_date": transaction_date,
         "transaction_time": transaction_time or None,
@@ -110,7 +146,13 @@ def update_transaction(
     }
 
     validate_transaction_input(data)
-    _validate_category_matches_type(category_id, transaction_type)
+    _validate_category_matches_type(
+        category_id, transaction_type, unchanged=(category_id == original["category_id"])
+    )
+    _validate_client_reference(client_id, unchanged=(client_id == original["client_id"]))
+    _validate_work_type_reference(
+        work_type_id, unchanged=(work_type_id == original["work_type_id"])
+    )
 
     data["updated_at"] = datetime.now().isoformat(timespec="seconds")
     repo.update_transaction(transaction_id, data)

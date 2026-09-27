@@ -57,6 +57,44 @@ with col1:
     )
 
 with col2:
+    client_names = [c["name"] for c in clients]
+    client_options = ["(선택 안함)", "+ 새 거래처 입력"] + client_names
+    client_choice = st.selectbox("거래처", client_options, key=field_key("client"))
+    new_client_name = ""
+    if client_choice == "+ 새 거래처 입력":
+        new_client_name = st.text_input("새 거래처명", key=field_key("new_client"))
+
+    # 거래처 기본값 자동 제안: 거래처를 "새로" 선택했을 때만 카테고리/업무유형에
+    # 해당 거래처의 기본값을 미리 채워준다. 카테고리/업무유형 위젯이 아직
+    # 이 실행에서 만들어지기 전이므로, session_state를 미리 설정해두면
+    # 아래에서 위젯이 생성될 때 그 값이 기본 선택값으로 반영된다.
+    # (사용자가 이후 직접 바꾼 값은 그대로 유지되며, 같은 거래처를 계속
+    # 선택하고 있는 동안에는 다시 덮어쓰지 않는다.)
+    applied_client_key = field_key("applied_client_default")
+    if client_choice not in ("(선택 안함)", "+ 새 거래처 입력"):
+        if st.session_state.get(applied_client_key) != client_choice:
+            selected_client = next((c for c in clients if c["name"] == client_choice), None)
+            if selected_client:
+                if selected_client["default_category_id"]:
+                    cat_row = next(
+                        (
+                            c
+                            for c in (income_categories + expense_categories)
+                            if c["id"] == selected_client["default_category_id"]
+                        ),
+                        None,
+                    )
+                    if cat_row and cat_row["type"] == transaction_type:
+                        st.session_state[field_key(f"category_{transaction_type}")] = cat_row["name"]
+                if selected_client["default_work_type_id"]:
+                    wt_row = next(
+                        (w for w in work_types if w["id"] == selected_client["default_work_type_id"]),
+                        None,
+                    )
+                    if wt_row:
+                        st.session_state[field_key("work_type")] = wt_row["name"]
+            st.session_state[applied_client_key] = client_choice
+
     categories = income_categories if transaction_type == "income" else expense_categories
     category_options = ["(선택 안함)"] + [c["name"] for c in categories]
     # key에 transaction_type을 포함시켜, 수입/지출 전환 시 이전 선택값이
@@ -64,13 +102,6 @@ with col2:
     category_choice = st.selectbox(
         "카테고리", category_options, key=field_key(f"category_{transaction_type}")
     )
-
-    client_names = [c["name"] for c in clients]
-    client_options = ["(선택 안함)", "+ 새 거래처 입력"] + client_names
-    client_choice = st.selectbox("거래처", client_options, key=field_key("client"))
-    new_client_name = ""
-    if client_choice == "+ 새 거래처 입력":
-        new_client_name = st.text_input("새 거래처명", key=field_key("new_client"))
 
     work_type_options = ["(선택 안함)"] + [w["name"] for w in work_types]
     work_type_choice = st.selectbox("업무유형", work_type_options, key=field_key("work_type"))

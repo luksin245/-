@@ -49,24 +49,43 @@ st.session_state.setdefault("list_work_type", "전체")
 st.session_state.setdefault("list_evidence", "전체")
 st.session_state.setdefault("list_keyword", "")
 
+# 거래등록/거래수정 화면의 "선택 가능한" 기준정보는 활성 항목만 대상으로 한다.
 income_categories = category_service.get_income_categories()
 expense_categories = category_service.get_expense_categories()
-all_categories = income_categories + expense_categories
 all_clients = client_service.get_clients()
 all_work_types = work_type_service.get_work_types()
 
+# 필터는 "과거 거래를 찾아보는" 용도이므로 비활성 기준정보도 포함해서 보여준다
+# (예: 지금은 비활성화된 거래처로 옛날 거래를 검색하고 싶을 수 있다).
+filter_categories = category_service.list_categories_admin(status="all")
+filter_clients = client_service.list_clients_admin(status="all")
+filter_work_types = work_type_service.list_work_types_admin(status="all")
+
+
+def _status_suffix(row: dict) -> str:
+    return "" if row["is_active"] else " (비활성)"
+
+
 category_label_to_id: dict[str, int] = {}
 category_options = ["전체"]
-for c in all_categories:
-    label = f"{c['name']} ({TYPE_LABELS[c['type']]})"
+for c in filter_categories:
+    label = f"{c['name']} ({TYPE_LABELS[c['type']]}){_status_suffix(c)}"
     category_label_to_id[label] = c["id"]
     category_options.append(label)
 
-client_name_to_id = {c["name"]: c["id"] for c in all_clients}
-client_options = ["전체"] + list(client_name_to_id.keys())
+client_label_to_id: dict[str, int] = {}
+client_options = ["전체"]
+for c in filter_clients:
+    label = f"{c['name']}{_status_suffix(c)}"
+    client_label_to_id[label] = c["id"]
+    client_options.append(label)
 
-work_type_name_to_id = {w["name"]: w["id"] for w in all_work_types}
-work_type_options = ["전체"] + list(work_type_name_to_id.keys())
+work_type_label_to_id: dict[str, int] = {}
+work_type_options = ["전체"]
+for w in filter_work_types:
+    label = f"{w['name']}{_status_suffix(w)}"
+    work_type_label_to_id[label] = w["id"]
+    work_type_options.append(label)
 
 evidence_options = ["전체"] + transaction_service.EVIDENCE_STATUS_OPTIONS
 
@@ -106,9 +125,9 @@ if type_choice != "전체":
 if category_choice != "전체":
     filters["category_id"] = category_label_to_id[category_choice]
 if client_choice != "전체":
-    filters["client_id"] = client_name_to_id[client_choice]
+    filters["client_id"] = client_label_to_id[client_choice]
 if work_type_choice != "전체":
-    filters["work_type_id"] = work_type_name_to_id[work_type_choice]
+    filters["work_type_id"] = work_type_label_to_id[work_type_choice]
 if evidence_choice != "전체":
     filters["evidence_status"] = evidence_choice
 if keyword and keyword.strip():
@@ -163,12 +182,28 @@ def open_edit_dialog(tx: dict) -> None:
         key=f"edit_balance_{tx_id}",
     )
 
-    # 수입/지출 유형에 맞는 카테고리만 선택지로 제공한다.
+    # 수입/지출 유형에 맞는 "활성" 카테고리만 선택지로 제공한다.
     # 유형이 바뀌어 기존 카테고리가 새 목록에 없으면 자동으로 "(선택 안함)"으로 비운다.
+    # 단, 유형을 바꾸지 않았고 기존 카테고리가 비활성 상태라면, 그 값이 목록에서
+    # 사라지지 않도록 "(비활성)" 표시를 붙여 선택지에 포함시킨다.
     categories = income_categories if transaction_type == "income" else expense_categories
-    category_names = [c["name"] for c in categories]
-    category_select_options = ["(선택 안함)"] + category_names
-    default_category = tx["category_name"] if tx["category_name"] in category_names else "(선택 안함)"
+    if (
+        tx["transaction_type"] == transaction_type
+        and tx["category_id"] is not None
+        and tx["category_id"] not in {c["id"] for c in categories}
+    ):
+        inactive_category = category_service.get_category(tx["category_id"])
+        if inactive_category:
+            categories = categories + [inactive_category]
+
+    category_name_options = {
+        c["name"] if c["is_active"] else f"{c['name']} (비활성)": c for c in categories
+    }
+    category_select_options = ["(선택 안함)"] + list(category_name_options.keys())
+    default_category = next(
+        (label for label, c in category_name_options.items() if c["id"] == tx["category_id"]),
+        "(선택 안함)",
+    )
     category_choice = st.selectbox(
         "카테고리",
         category_select_options,
@@ -176,9 +211,19 @@ def open_edit_dialog(tx: dict) -> None:
         key=f"edit_category_{tx_id}_{transaction_type}",
     )
 
-    client_names = [c["name"] for c in all_clients]
-    client_select_options = ["(선택 안함)"] + client_names
-    default_client = tx["client_name"] if tx["client_name"] in client_names else "(선택 안함)"
+    clients_for_edit = list(all_clients)
+    if tx["client_id"] is not None and tx["client_id"] not in {c["id"] for c in clients_for_edit}:
+        inactive_client = client_service.get_client(tx["client_id"])
+        if inactive_client:
+            clients_for_edit = clients_for_edit + [inactive_client]
+    client_name_options = {
+        c["name"] if c["is_active"] else f"{c['name']} (비활성)": c for c in clients_for_edit
+    }
+    client_select_options = ["(선택 안함)"] + list(client_name_options.keys())
+    default_client = next(
+        (label for label, c in client_name_options.items() if c["id"] == tx["client_id"]),
+        "(선택 안함)",
+    )
     client_choice = st.selectbox(
         "거래처",
         client_select_options,
@@ -186,9 +231,19 @@ def open_edit_dialog(tx: dict) -> None:
         key=f"edit_client_{tx_id}",
     )
 
-    work_type_names = [w["name"] for w in all_work_types]
-    work_type_select_options = ["(선택 안함)"] + work_type_names
-    default_work_type = tx["work_type_name"] if tx["work_type_name"] in work_type_names else "(선택 안함)"
+    work_types_for_edit = list(all_work_types)
+    if tx["work_type_id"] is not None and tx["work_type_id"] not in {w["id"] for w in work_types_for_edit}:
+        inactive_work_type = work_type_service.get_work_type(tx["work_type_id"])
+        if inactive_work_type:
+            work_types_for_edit = work_types_for_edit + [inactive_work_type]
+    work_type_name_options = {
+        w["name"] if w["is_active"] else f"{w['name']} (비활성)": w for w in work_types_for_edit
+    }
+    work_type_select_options = ["(선택 안함)"] + list(work_type_name_options.keys())
+    default_work_type = next(
+        (label for label, w in work_type_name_options.items() if w["id"] == tx["work_type_id"]),
+        "(선택 안함)",
+    )
     work_type_choice = st.selectbox(
         "업무유형",
         work_type_select_options,
@@ -219,15 +274,15 @@ def open_edit_dialog(tx: dict) -> None:
 
             category_id = None
             if category_choice != "(선택 안함)":
-                category_id = next(c["id"] for c in categories if c["name"] == category_choice)
+                category_id = category_name_options[category_choice]["id"]
 
             client_id = None
             if client_choice != "(선택 안함)":
-                client_id = next(c["id"] for c in all_clients if c["name"] == client_choice)
+                client_id = client_name_options[client_choice]["id"]
 
             work_type_id = None
             if work_type_choice != "(선택 안함)":
-                work_type_id = next(w["id"] for w in all_work_types if w["name"] == work_type_choice)
+                work_type_id = work_type_name_options[work_type_choice]["id"]
 
             transaction_service.update_transaction(
                 transaction_id=tx_id,
