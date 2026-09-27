@@ -5,16 +5,26 @@
 
 Streamlit UI를 직접 조작하지 않고, UI가 호출하는 것과 동일한
 services / db 계층 함수를 그대로 호출하여 요구된 11개 시나리오를 검증한다.
+
+실제 data/finance.db는 절대 건드리지 않고, tests/ 폴더 아래
+임시 DB 파일(_stage1_test.db)을 만들어 사용한 뒤 종료 시 삭제한다.
 """
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from db.database import init_db, DB_PATH
-from db import category_repository, work_type_repository, transaction_repository
-from services import transaction_service
-from utils.validators import ValidationError
+import db.database as database  # noqa: E402
+
+TEMP_DB_PATH = Path(__file__).resolve().parent / "_stage1_test.db"
+if TEMP_DB_PATH.exists():
+    TEMP_DB_PATH.unlink()
+database.DB_PATH = TEMP_DB_PATH
+
+from db.database import init_db  # noqa: E402
+from db import category_repository, work_type_repository, transaction_repository  # noqa: E402
+from services import transaction_service  # noqa: E402
+from utils.validators import ValidationError  # noqa: E402
 
 results: list[tuple[str, bool]] = []
 
@@ -25,11 +35,9 @@ def check(name: str, condition: bool) -> None:
 
 
 def main() -> bool:
-    # 1. DB 최초 생성 (기존 파일 제거 후 재생성하여 '최초 실행'을 재현)
-    if DB_PATH.exists():
-        DB_PATH.unlink()
+    # 1. DB 최초 생성 (임시 DB 파일 기준으로 '최초 실행'을 재현)
     init_db()
-    check("1. DB 파일 최초 생성", DB_PATH.exists())
+    check("1. DB 파일 최초 생성", TEMP_DB_PATH.exists())
 
     # 2. 기본 카테고리 생성
     income_cats = category_repository.get_categories(type_="income")
@@ -141,6 +149,7 @@ def main() -> bool:
     passed = sum(1 for _, ok in results if ok)
     print(f"결과: {passed}/{total} 통과")
 
+    TEMP_DB_PATH.unlink(missing_ok=True)
     return passed == total
 
 

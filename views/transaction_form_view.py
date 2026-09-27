@@ -59,7 +59,11 @@ with col1:
 with col2:
     categories = income_categories if transaction_type == "income" else expense_categories
     category_options = ["(선택 안함)"] + [c["name"] for c in categories]
-    category_choice = st.selectbox("카테고리", category_options, key=field_key("category"))
+    # key에 transaction_type을 포함시켜, 수입/지출 전환 시 이전 선택값이
+    # 새 옵션 목록에 없어 발생하는 위젯 오류를 방지하고 선택값도 자동으로 비운다.
+    category_choice = st.selectbox(
+        "카테고리", category_options, key=field_key(f"category_{transaction_type}")
+    )
 
     client_names = [c["name"] for c in clients]
     client_options = ["(선택 안함)", "+ 새 거래처 입력"] + client_names

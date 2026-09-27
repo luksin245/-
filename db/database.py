@@ -2,17 +2,20 @@
 
 UI(views)나 service 계층은 이 모듈을 통해서만 커넥션을 얻는다.
 """
+import os
 import sqlite3
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "finance.db"
+# FINANCE_DB_PATH 환경변수로 다른 DB 파일을 가리키게 할 수 있다.
+# (자동 테스트나 실제 데이터를 건드리지 않는 UI 점검용도로 사용)
+DB_PATH = Path(os.environ.get("FINANCE_DB_PATH", str(DATA_DIR / "finance.db")))
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 
 def get_connection() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

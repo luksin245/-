@@ -16,3 +16,12 @@ def get_categories(type_: str | None = None, active_only: bool = True) -> list[d
         return [dict(row) for row in rows]
     finally:
         conn.close()
+
+
+def get_category_by_id(category_id: int) -> dict | None:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
