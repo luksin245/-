@@ -81,6 +81,7 @@ def get_dashboard_data(start: date, end: date) -> dict:
     filters = {"start_date": start_str, "end_date": end_str}
 
     summary = _with_net_amount(tx_repo.get_transaction_summary(filters))
+    accounting_summary = tx_repo.get_accounting_type_summary(filters)
 
     prev_start, prev_end = get_previous_period(start, end)
     prev_filters = {"start_date": prev_start.isoformat(), "end_date": prev_end.isoformat()}
@@ -88,6 +89,7 @@ def get_dashboard_data(start: date, end: date) -> dict:
 
     return {
         "summary": summary,
+        "accounting_summary": accounting_summary,
         "prev_summary": prev_summary,
         "prev_period": (prev_start, prev_end),
         "monthly_trend": dash_repo.get_monthly_trend(start_str, end_str),

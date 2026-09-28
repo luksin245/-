@@ -1,11 +1,18 @@
 import pandas as pd
 import streamlit as st
 
-from services import category_service, client_service, work_type_service
+from services import (
+    account_service,
+    category_rule_service,
+    category_service,
+    client_service,
+    transaction_service,
+    work_type_service,
+)
 from utils.validators import ValidationError
 
 st.title("🗂️ 기준정보 관리")
-st.caption("거래처 / 카테고리 / 업무유형을 관리합니다. 삭제 대신 비활성화 방식을 사용하므로 기존 거래내역은 항상 안전하게 유지됩니다.")
+st.caption("거래처 / 카테고리 / 업무유형 / 계정과목을 관리합니다. 삭제 대신 비활성화 방식을 사용하므로 기존 거래내역은 항상 안전하게 유지됩니다.")
 
 TYPE_LABELS = {"income": "수입", "expense": "지출"}
 STATUS_OPTIONS = ["활성", "비활성", "전체"]
@@ -23,6 +30,8 @@ def _clear_flag(flag_key: str, suffix_key: str) -> None:
 _clear_flag("client_clear_selection", "client_select_suffix")
 _clear_flag("category_clear_selection", "category_select_suffix")
 _clear_flag("work_type_clear_selection", "work_type_select_suffix")
+_clear_flag("account_clear_selection", "account_select_suffix")
+_clear_flag("rule_clear_selection", "rule_select_suffix")
 
 if msg := st.session_state.pop("client_msg", None):
     st.success(msg)
@@ -30,15 +39,19 @@ if msg := st.session_state.pop("category_msg", None):
     st.success(msg)
 if msg := st.session_state.pop("work_type_msg", None):
     st.success(msg)
+if msg := st.session_state.pop("account_msg", None):
+    st.success(msg)
+if msg := st.session_state.pop("rule_msg", None):
+    st.success(msg)
 
 
 # st.tabs는 다이얼로그의 st.rerun() 이후 선택된 탭이 첫 번째로 되돌아가는
 # 경우가 있어(프론트엔드 전용 상태이기 때문), session_state로 직접 관리되는
 # 라디오 버튼으로 탭을 구현한다 - 이렇게 하면 어떤 동작 후에도 사용자가
-# 보던 화면(거래처/카테고리/업무유형)에 그대로 머무른다.
+# 보던 화면(거래처/카테고리/업무유형/계정과목)에 그대로 머무른다.
 st.session_state.setdefault("md_active_tab", "거래처")
 active_tab = st.radio(
-    "관리 항목", ["거래처", "카테고리", "업무유형"], horizontal=True, key="md_active_tab"
+    "관리 항목", ["거래처", "카테고리", "업무유형", "계정과목", "자동분류 규칙"], horizontal=True, key="md_active_tab"
 )
 
 
@@ -356,7 +369,7 @@ elif active_tab == "카테고리":
 # =====================================================================
 # 업무유형
 # =====================================================================
-else:  # 업무유형
+elif active_tab == "업무유형":
     st.subheader("업무유형 관리")
 
     @st.dialog("새 업무유형 추가")
@@ -462,3 +475,345 @@ else:  # 업무유형
             else:
                 if st.button("🚫 비활성화", disabled=selected_work_type is None, key="work_type_deactivate_btn", use_container_width=True):
                     open_deactivate_work_type_dialog(selected_work_type)
+
+
+# =====================================================================
+# 계정과목
+# =====================================================================
+elif active_tab == "계정과목":
+    st.subheader("계정과목 관리")
+    st.caption("법인 통장 거래를 정리할 때 참고하는 계정과목입니다. 세무사 전달용 Excel에도 함께 표시됩니다.")
+
+    @st.dialog("새 계정과목 추가")
+    def open_add_account_dialog() -> None:
+        name = st.text_input("계정과목명 *", key="add_account_name")
+        sort_order = st.number_input("정렬순서", min_value=0, step=1, value=0, key="add_account_sort")
+        st.caption("* 표시 항목은 필수입니다.")
+
+        if st.button("추가", type="primary", key="add_account_submit"):
+            try:
+                account_service.create_account(name, int(sort_order))
+                st.session_state["account_msg"] = f"'{name.strip()}' 계정과목을 추가했습니다."
+                st.rerun()
+            except ValidationError as e:
+                st.error(str(e))
+
+    @st.dialog("계정과목 수정")
+    def open_edit_account_dialog(account: dict) -> None:
+        st.caption(f"'{account['name']}' 계정과목 정보를 수정합니다.")
+        name = st.text_input("계정과목명 *", value=account["name"], key=f"edit_account_name_{account['id']}")
+        sort_order = st.number_input(
+            "정렬순서", min_value=0, step=1, value=account["sort_order"], key=f"edit_account_sort_{account['id']}"
+        )
+
+        if st.button("저장", type="primary", key=f"edit_account_submit_{account['id']}"):
+            try:
+                account_service.update_account_info(account["id"], name, int(sort_order))
+                st.session_state["account_msg"] = f"'{name.strip()}' 계정과목 정보를 수정했습니다."
+                st.session_state["account_clear_selection"] = True
+                st.rerun()
+            except ValidationError as e:
+                st.error(str(e))
+
+    @st.dialog("계정과목 비활성화")
+    def open_deactivate_account_dialog(account: dict) -> None:
+        st.warning(
+            f"'{account['name']}'을(를) 비활성화하시겠습니까?\n\n"
+            "기존 거래내역은 유지되며, 신규 거래 등록에서는 선택되지 않습니다."
+        )
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("비활성화", type="primary", key=f"confirm_deactivate_account_{account['id']}", use_container_width=True):
+                account_service.deactivate_account(account["id"])
+                st.session_state["account_msg"] = f"'{account['name']}'을(를) 비활성화했습니다."
+                st.session_state["account_clear_selection"] = True
+                st.rerun()
+        with col_cancel:
+            if st.button("취소", key=f"cancel_deactivate_account_{account['id']}", use_container_width=True):
+                st.rerun()
+
+    if st.button("+ 새 계정과목 추가", key="open_add_account"):
+        open_add_account_dialog()
+
+    st.divider()
+
+    account_status_choice = st.selectbox("상태 필터", STATUS_OPTIONS, index=0, key="account_status_filter")
+
+    accounts_admin = account_service.list_accounts_admin(status=STATUS_MAP[account_status_choice])
+
+    if not accounts_admin:
+        st.info("조건에 해당하는 계정과목이 없습니다.")
+    else:
+        rows = [
+            {
+                "계정과목명": a["name"],
+                "상태": "활성" if a["is_active"] else "비활성",
+                "정렬순서": a["sort_order"],
+            }
+            for a in accounts_admin
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        st.caption("아래에서 수정 또는 상태를 변경할 계정과목을 선택하세요.")
+
+        def _fmt_account_option(i: int | None) -> str:
+            if i is None:
+                return "(선택 안함)"
+            a = accounts_admin[i]
+            return f"{a['name']} ({'활성' if a['is_active'] else '비활성'})"
+
+        account_selected_idx = st.selectbox(
+            "수정 또는 상태변경할 계정과목 선택",
+            options=list(range(len(accounts_admin))),
+            format_func=_fmt_account_option,
+            index=None,
+            placeholder="(선택 안함)",
+            key=f"account_selected_idx_{st.session_state['account_select_suffix']}",
+        )
+        selected_account = accounts_admin[account_selected_idx] if account_selected_idx is not None else None
+
+        col_edit, col_toggle = st.columns(2)
+        with col_edit:
+            if st.button("✏️ 수정", disabled=selected_account is None, key="account_edit_btn", use_container_width=True):
+                open_edit_account_dialog(selected_account)
+        with col_toggle:
+            if selected_account is not None and not selected_account["is_active"]:
+                if st.button("♻️ 재활성화", key="account_activate_btn", use_container_width=True):
+                    account_service.activate_account(selected_account["id"])
+                    st.session_state["account_msg"] = f"'{selected_account['name']}'을(를) 재활성화했습니다."
+                    st.session_state["account_clear_selection"] = True
+                    st.rerun()
+            else:
+                if st.button("🚫 비활성화", disabled=selected_account is None, key="account_deactivate_btn", use_container_width=True):
+                    open_deactivate_account_dialog(selected_account)
+
+
+# =====================================================================
+# 자동분류 규칙
+# =====================================================================
+else:  # 자동분류 규칙
+    st.subheader("자동분류 규칙 관리")
+    st.caption(
+        "키워드가 거래내용/거래처명에 포함되면 카테고리/거래처/업무유형/계정과목/회계구분을 "
+        "'추천'만 해줍니다. 통장 가져오기(OCR) 검토 화면에서 추천값으로 미리 채워질 뿐이며, "
+        "언제든 다른 값으로 바꿀 수 있고 자동으로 확정 저장되지는 않습니다."
+    )
+
+    combined_categories = category_service.get_income_categories() + category_service.get_expense_categories()
+    rule_category_label_to_id = {
+        f"{c['name']} ({TYPE_LABELS[c['type']]})": c["id"] for c in combined_categories
+    }
+    rule_clients = client_service.get_clients()
+    rule_client_label_to_id = {c["name"]: c["id"] for c in rule_clients}
+    rule_work_types = work_type_service.get_work_types()
+    rule_work_type_label_to_id = {w["name"]: w["id"] for w in rule_work_types}
+    rule_accounts = account_service.get_accounts()
+    rule_account_label_to_id = {a["name"]: a["id"] for a in rule_accounts}
+    rule_accounting_type_options = ["(선택 안함)"] + transaction_service.ACCOUNTING_TYPE_OPTIONS
+
+    def _resolve_rule_names(rule: dict) -> dict:
+        category = category_service.get_category(rule["suggested_category_id"]) if rule["suggested_category_id"] else None
+        client = client_service.get_client(rule["suggested_client_id"]) if rule["suggested_client_id"] else None
+        work_type = work_type_service.get_work_type(rule["suggested_work_type_id"]) if rule["suggested_work_type_id"] else None
+        account = account_service.get_account(rule["suggested_account_id"]) if rule["suggested_account_id"] else None
+        return {
+            "category": f"{category['name']} ({TYPE_LABELS[category['type']]})" if category else "",
+            "client": client["name"] if client else "",
+            "work_type": work_type["name"] if work_type else "",
+            "account": account["name"] if account else "",
+            "accounting_type": rule["suggested_accounting_type"] or "",
+        }
+
+    @st.dialog("새 자동분류 규칙 추가")
+    def open_add_rule_dialog() -> None:
+        keyword = st.text_input("키워드 *", key="add_rule_keyword", placeholder="예: KT, A회사")
+        match_field_label = st.radio(
+            "매칭 대상 *", ["거래내용", "거래처명"], horizontal=True, key="add_rule_match_field"
+        )
+        category_choice = st.selectbox(
+            "추천 카테고리", ["(선택 안함)"] + list(rule_category_label_to_id.keys()), key="add_rule_category"
+        )
+        client_choice = st.selectbox(
+            "추천 거래처", ["(선택 안함)"] + list(rule_client_label_to_id.keys()), key="add_rule_client"
+        )
+        work_type_choice = st.selectbox(
+            "추천 업무유형", ["(선택 안함)"] + list(rule_work_type_label_to_id.keys()), key="add_rule_work_type"
+        )
+        account_choice = st.selectbox(
+            "추천 계정과목", ["(선택 안함)"] + list(rule_account_label_to_id.keys()), key="add_rule_account"
+        )
+        accounting_type_choice = st.selectbox(
+            "추천 회계구분", rule_accounting_type_options, key="add_rule_accounting_type"
+        )
+        st.caption("* 표시 항목은 필수입니다. 추천 항목은 최소 1개 이상 선택하는 것을 권장합니다.")
+
+        if st.button("추가", type="primary", key="add_rule_submit"):
+            try:
+                match_field = "description" if match_field_label == "거래내용" else "client_name"
+                category_rule_service.create_rule(
+                    keyword=keyword,
+                    match_field=match_field,
+                    suggested_category_id=rule_category_label_to_id.get(category_choice),
+                    suggested_client_id=rule_client_label_to_id.get(client_choice),
+                    suggested_work_type_id=rule_work_type_label_to_id.get(work_type_choice),
+                    suggested_account_id=rule_account_label_to_id.get(account_choice),
+                    suggested_accounting_type=(
+                        accounting_type_choice if accounting_type_choice != "(선택 안함)" else None
+                    ),
+                )
+                st.session_state["rule_msg"] = f"'{keyword.strip()}' 규칙을 추가했습니다."
+                st.rerun()
+            except ValidationError as e:
+                st.error(str(e))
+
+    @st.dialog("자동분류 규칙 수정")
+    def open_edit_rule_dialog(rule: dict) -> None:
+        st.caption(f"'{rule['keyword']}' 규칙을 수정합니다.")
+        keyword = st.text_input("키워드 *", value=rule["keyword"], key=f"edit_rule_keyword_{rule['id']}")
+        match_field_options = ["거래내용", "거래처명"]
+        current_match_label = "거래내용" if rule["match_field"] == "description" else "거래처명"
+        match_field_label = st.radio(
+            "매칭 대상 *",
+            match_field_options,
+            index=match_field_options.index(current_match_label),
+            horizontal=True,
+            key=f"edit_rule_match_field_{rule['id']}",
+        )
+
+        names = _resolve_rule_names(rule)
+        category_options = ["(선택 안함)"] + list(rule_category_label_to_id.keys())
+        category_choice = st.selectbox(
+            "추천 카테고리",
+            category_options,
+            index=category_options.index(names["category"]) if names["category"] in category_options else 0,
+            key=f"edit_rule_category_{rule['id']}",
+        )
+        client_options = ["(선택 안함)"] + list(rule_client_label_to_id.keys())
+        client_choice = st.selectbox(
+            "추천 거래처",
+            client_options,
+            index=client_options.index(names["client"]) if names["client"] in client_options else 0,
+            key=f"edit_rule_client_{rule['id']}",
+        )
+        work_type_options = ["(선택 안함)"] + list(rule_work_type_label_to_id.keys())
+        work_type_choice = st.selectbox(
+            "추천 업무유형",
+            work_type_options,
+            index=work_type_options.index(names["work_type"]) if names["work_type"] in work_type_options else 0,
+            key=f"edit_rule_work_type_{rule['id']}",
+        )
+        account_options = ["(선택 안함)"] + list(rule_account_label_to_id.keys())
+        account_choice = st.selectbox(
+            "추천 계정과목",
+            account_options,
+            index=account_options.index(names["account"]) if names["account"] in account_options else 0,
+            key=f"edit_rule_account_{rule['id']}",
+        )
+        accounting_type_choice = st.selectbox(
+            "추천 회계구분",
+            rule_accounting_type_options,
+            index=(
+                rule_accounting_type_options.index(names["accounting_type"])
+                if names["accounting_type"] in rule_accounting_type_options
+                else 0
+            ),
+            key=f"edit_rule_accounting_type_{rule['id']}",
+        )
+
+        if st.button("저장", type="primary", key=f"edit_rule_submit_{rule['id']}"):
+            try:
+                match_field = "description" if match_field_label == "거래내용" else "client_name"
+                category_rule_service.update_rule_info(
+                    rule["id"],
+                    keyword=keyword,
+                    match_field=match_field,
+                    suggested_category_id=rule_category_label_to_id.get(category_choice),
+                    suggested_client_id=rule_client_label_to_id.get(client_choice),
+                    suggested_work_type_id=rule_work_type_label_to_id.get(work_type_choice),
+                    suggested_account_id=rule_account_label_to_id.get(account_choice),
+                    suggested_accounting_type=(
+                        accounting_type_choice if accounting_type_choice != "(선택 안함)" else None
+                    ),
+                )
+                st.session_state["rule_msg"] = f"'{keyword.strip()}' 규칙 정보를 수정했습니다."
+                st.session_state["rule_clear_selection"] = True
+                st.rerun()
+            except ValidationError as e:
+                st.error(str(e))
+
+    @st.dialog("자동분류 규칙 비활성화")
+    def open_deactivate_rule_dialog(rule: dict) -> None:
+        st.warning(f"'{rule['keyword']}' 규칙을 비활성화하시겠습니까?\n\n비활성화하면 더 이상 추천에 사용되지 않습니다.")
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("비활성화", type="primary", key=f"confirm_deactivate_rule_{rule['id']}", use_container_width=True):
+                category_rule_service.deactivate_rule(rule["id"])
+                st.session_state["rule_msg"] = f"'{rule['keyword']}' 규칙을 비활성화했습니다."
+                st.session_state["rule_clear_selection"] = True
+                st.rerun()
+        with col_cancel:
+            if st.button("취소", key=f"cancel_deactivate_rule_{rule['id']}", use_container_width=True):
+                st.rerun()
+
+    if st.button("+ 새 규칙 추가", key="open_add_rule"):
+        open_add_rule_dialog()
+
+    st.divider()
+
+    rule_status_choice = st.selectbox("상태 필터", STATUS_OPTIONS, index=0, key="rule_status_filter")
+
+    rules_admin = category_rule_service.list_rules(status=STATUS_MAP[rule_status_choice])
+
+    if not rules_admin:
+        st.info("조건에 해당하는 규칙이 없습니다.")
+    else:
+        rows = []
+        for r in rules_admin:
+            names = _resolve_rule_names(r)
+            rows.append(
+                {
+                    "키워드": r["keyword"],
+                    "매칭 대상": "거래내용" if r["match_field"] == "description" else "거래처명",
+                    "추천 카테고리": names["category"],
+                    "추천 거래처": names["client"],
+                    "추천 업무유형": names["work_type"],
+                    "추천 계정과목": names["account"],
+                    "추천 회계구분": names["accounting_type"],
+                    "사용 횟수": r["hit_count"],
+                    "상태": "활성" if r["is_active"] else "비활성",
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        st.caption("아래에서 수정 또는 상태를 변경할 규칙을 선택하세요.")
+
+        def _fmt_rule_option(i: int | None) -> str:
+            if i is None:
+                return "(선택 안함)"
+            r = rules_admin[i]
+            return f"{r['keyword']} ({'활성' if r['is_active'] else '비활성'})"
+
+        rule_selected_idx = st.selectbox(
+            "수정 또는 상태변경할 규칙 선택",
+            options=list(range(len(rules_admin))),
+            format_func=_fmt_rule_option,
+            index=None,
+            placeholder="(선택 안함)",
+            key=f"rule_selected_idx_{st.session_state['rule_select_suffix']}",
+        )
+        selected_rule = rules_admin[rule_selected_idx] if rule_selected_idx is not None else None
+
+        col_edit, col_toggle = st.columns(2)
+        with col_edit:
+            if st.button("✏️ 수정", disabled=selected_rule is None, key="rule_edit_btn", use_container_width=True):
+                open_edit_rule_dialog(selected_rule)
+        with col_toggle:
+            if selected_rule is not None and not selected_rule["is_active"]:
+                if st.button("♻️ 재활성화", key="rule_activate_btn", use_container_width=True):
+                    category_rule_service.activate_rule(selected_rule["id"])
+                    st.session_state["rule_msg"] = f"'{selected_rule['keyword']}' 규칙을 재활성화했습니다."
+                    st.session_state["rule_clear_selection"] = True
+                    st.rerun()
+            else:
+                if st.button("🚫 비활성화", disabled=selected_rule is None, key="rule_deactivate_btn", use_container_width=True):
+                    open_deactivate_rule_dialog(selected_rule)

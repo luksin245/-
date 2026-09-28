@@ -34,6 +34,12 @@ def _build_filter_clause(filters: dict | None) -> tuple[str, list]:
     if filters.get("work_type_id"):
         clauses.append("t.work_type_id = ?")
         params.append(filters["work_type_id"])
+    if filters.get("account_id"):
+        clauses.append("t.account_id = ?")
+        params.append(filters["account_id"])
+    if filters.get("accounting_type"):
+        clauses.append("t.accounting_type = ?")
+        params.append(filters["accounting_type"])
     if filters.get("evidence_status"):
         clauses.append("t.evidence_status = ?")
         params.append(filters["evidence_status"])
@@ -50,6 +56,7 @@ _JOIN_SQL = """
     LEFT JOIN categories c ON t.category_id = c.id
     LEFT JOIN clients cl ON t.client_id = cl.id
     LEFT JOIN work_types w ON t.work_type_id = w.id
+    LEFT JOIN chart_of_accounts a ON t.account_id = a.id
 """
 
 
@@ -61,10 +68,12 @@ def insert_transaction(data: dict) -> int:
             INSERT INTO transactions (
                 transaction_date, transaction_time, description, transaction_type,
                 amount, balance, category_id, client_id, work_type_id,
+                account_id, accounting_type,
                 vat_status, evidence_status, memo, source_type, created_at, updated_at
             ) VALUES (
                 :transaction_date, :transaction_time, :description, :transaction_type,
                 :amount, :balance, :category_id, :client_id, :work_type_id,
+                :account_id, :accounting_type,
                 :vat_status, :evidence_status, :memo, :source_type, :created_at, :updated_at
             )
             """,
@@ -105,7 +114,7 @@ def delete_transaction(transaction_id: int) -> None:
 
 
 def get_transactions(filters: dict | None = None, limit: int | None = None) -> list[dict]:
-    """카테고리/거래처/업무유형 이름까지 JOIN하여 조회한다.
+    """카테고리/거래처/업무유형/계정과목 이름까지 JOIN하여 조회한다.
 
     기본 정렬: 거래일자 내림차순 -> 거래시간 내림차순 -> id 내림차순.
     limit을 주면 DB 쿼리 단계에서 앞의 N건만 가져온다 (예: 대시보드 최근 거래).
@@ -118,7 +127,8 @@ def get_transactions(filters: dict | None = None, limit: int | None = None) -> l
                 t.*,
                 c.name AS category_name,
                 cl.name AS client_name,
-                w.name AS work_type_name
+                w.name AS work_type_name,
+                a.name AS account_name
             FROM transactions t
             {_JOIN_SQL}
             {where_sql}
@@ -154,6 +164,29 @@ def get_transaction_summary(filters: dict | None = None) -> dict:
         conn.close()
 
 
+def get_accounting_type_summary(filters: dict | None = None) -> dict:
+    """회계구분(매출/비용) 기준 합계를 집계한다.
+
+    transaction_type(입금/출금)과는 별개의 개념이다 - 예를 들어 대표자
+    가수금 입금은 transaction_type='income'이지만 accounting_type은
+    '비매출입금'일 수 있다.
+    """
+    where_sql, params = _build_filter_clause(filters)
+    conn = get_connection()
+    try:
+        query = f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN t.accounting_type = '매출' THEN t.amount ELSE 0 END), 0) AS total_revenue,
+                COALESCE(SUM(CASE WHEN t.accounting_type = '비용' THEN t.amount ELSE 0 END), 0) AS total_cost
+            FROM transactions t
+            {where_sql}
+        """
+        row = conn.execute(query, params).fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
 def get_transaction_by_id(transaction_id: int) -> dict | None:
     conn = get_connection()
     try:
@@ -163,7 +196,8 @@ def get_transaction_by_id(transaction_id: int) -> dict | None:
                 t.*,
                 c.name AS category_name,
                 cl.name AS client_name,
-                w.name AS work_type_name
+                w.name AS work_type_name,
+                a.name AS account_name
             FROM transactions t
             {_JOIN_SQL}
             WHERE t.id = ?
@@ -190,6 +224,8 @@ def update_transaction(transaction_id: int, data: dict) -> None:
                 category_id = :category_id,
                 client_id = :client_id,
                 work_type_id = :work_type_id,
+                account_id = :account_id,
+                accounting_type = :accounting_type,
                 vat_status = :vat_status,
                 evidence_status = :evidence_status,
                 memo = :memo,
@@ -199,5 +235,43 @@ def update_transaction(transaction_id: int, data: dict) -> None:
             {**data, "id": transaction_id},
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def find_potential_duplicates(
+    transaction_date: str,
+    amount: int,
+    balance: int | None,
+    transaction_time: str | None = None,
+    description: str | None = None,
+    transaction_type: str | None = None,
+) -> list[dict]:
+    """중복 감지(10단계)를 위한 후보 조회.
+
+    날짜+금액(+가능하면 잔액)이 같은 기존 거래를 찾아 반환한다.
+    idx_transactions_dedup(transaction_date, amount, balance) 인덱스를 탄다.
+    실제 '강한 중복'/'부분 중복' 판정은 service 계층에서 이 후보들을 놓고
+    시간/거래내용/구분까지 비교해 판단한다 (여기서는 단순 후보 조회만 한다).
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                t.*,
+                c.name AS category_name,
+                cl.name AS client_name,
+                w.name AS work_type_name,
+                a.name AS account_name
+            FROM transactions t
+            """
+            + _JOIN_SQL
+            + """
+            WHERE t.transaction_date = ? AND t.amount = ?
+            """,
+            (transaction_date, amount),
+        ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()

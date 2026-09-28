@@ -106,6 +106,21 @@ extra_col4.metric("평균 지출 거래금액", f"{format_amount(expense_avg)}�
 
 st.divider()
 
+# ---------- 회계구분 기준 요약 (총수입/총지출과는 다른 개념) ----------
+st.subheader("회계구분 기준 요약 (참고)")
+st.caption(
+    "⚠️ 위 총수입/총지출은 **통장 입금·출금 기준**이고, 아래 총매출/총비용은 "
+    "거래마다 지정한 **회계구분**(매출/비용/자금이동/비매출입금/비비용출금/미분류) 기준입니다. "
+    "예를 들어 대표자가 법인에 자금을 입금하면 통장 기준으로는 '수입'이지만, "
+    "회계구분을 '비매출입금'으로 지정하면 매출로 집계되지 않습니다. 두 수치는 서로 다른 개념이므로 혼동하지 마세요."
+)
+accounting_summary = data["accounting_summary"]
+acct_col1, acct_col2 = st.columns(2)
+acct_col1.metric("총매출 (회계구분 기준)", f"{format_amount(accounting_summary['total_revenue'])}원")
+acct_col2.metric("총비용 (회계구분 기준)", f"{format_amount(accounting_summary['total_cost'])}원")
+
+st.divider()
+
 # ---------- 차트 1: 월별 수입/지출 추이 ----------
 st.subheader("월별 수입 · 지출 추이")
 
@@ -134,7 +149,7 @@ fig_trend.update_layout(
     xaxis_title=None,
     margin=dict(t=10, b=10),
 )
-st.plotly_chart(fig_trend, use_container_width=True)
+st.plotly_chart(fig_trend, use_container_width=True, key="dash_chart_trend")
 
 st.divider()
 
@@ -172,7 +187,7 @@ else:
         xaxis_range=[0, cat_df["total"].max() * 1.2],
         margin=dict(t=10, b=10, l=10),
     )
-    st.plotly_chart(fig_cat, use_container_width=True)
+    st.plotly_chart(fig_cat, use_container_width=True, key="dash_chart_expense_category")
 
 st.divider()
 
@@ -206,7 +221,7 @@ else:
         xaxis_range=[0, wt_df["total"].max() * 1.2],
         margin=dict(t=10, b=10, l=10),
     )
-    st.plotly_chart(fig_wt, use_container_width=True)
+    st.plotly_chart(fig_wt, use_container_width=True, key="dash_chart_income_work_type")
 
 st.divider()
 
@@ -241,7 +256,7 @@ else:
         xaxis_range=[0, client_df["total"].max() * 1.2],
         margin=dict(t=10, b=10, l=10),
     )
-    st.plotly_chart(fig_client, use_container_width=True)
+    st.plotly_chart(fig_client, use_container_width=True, key="dash_chart_income_client")
 
 st.divider()
 

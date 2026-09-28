@@ -1,13 +1,19 @@
 # 금융정보 / 개인정보가 포함된 데이터는 절대 Git에 올리지 않는다
 data/*.db
+*.db
 data/uploads/
 data/backups/
+data/temp/
+
+# 환경변수 / 시크릿
+.env
 
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # Streamlit
 .streamlit/

@@ -1,3 +1,7 @@
 streamlit>=1.36
 pandas
 plotly
+openpyxl
+pillow
+pytesseract
+pymupdf

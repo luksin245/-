@@ -3,7 +3,7 @@ from datetime import date
 
 import streamlit as st
 
-from services import category_service, client_service, transaction_service, work_type_service
+from services import account_service, category_service, client_service, transaction_service, work_type_service
 from utils.formatting import parse_amount
 from utils.validators import ValidationError
 
@@ -30,6 +30,7 @@ income_categories = category_service.get_income_categories()
 expense_categories = category_service.get_expense_categories()
 work_types = work_type_service.get_work_types()
 clients = client_service.get_clients()
+accounts = account_service.get_accounts()
 
 col1, col2 = st.columns(2)
 
@@ -106,6 +107,18 @@ with col2:
     work_type_options = ["(선택 안함)"] + [w["name"] for w in work_types]
     work_type_choice = st.selectbox("업무유형", work_type_options, key=field_key("work_type"))
 
+    accounting_type = st.selectbox(
+        "회계구분",
+        transaction_service.ACCOUNTING_TYPE_OPTIONS,
+        index=transaction_service.ACCOUNTING_TYPE_OPTIONS.index(
+            transaction_service.DEFAULT_ACCOUNTING_TYPE
+        ),
+        key=field_key("accounting_type"),
+        help="입금/출금(통장 방향)과는 다른 개념입니다. 매출/비용 여부가 명확하지 않으면 '미분류'로 두세요.",
+    )
+    account_options = ["(선택 안함)"] + [a["name"] for a in accounts]
+    account_choice = st.selectbox("계정과목", account_options, key=field_key("account"))
+
     vat_status = st.selectbox(
         "부가세 여부",
         transaction_service.VAT_STATUS_OPTIONS,
@@ -147,6 +160,10 @@ if submitted:
         if work_type_choice != "(선택 안함)":
             work_type_id = next(w["id"] for w in work_types if w["name"] == work_type_choice)
 
+        account_id = None
+        if account_choice != "(선택 안함)":
+            account_id = next(a["id"] for a in accounts if a["name"] == account_choice)
+
         # 동일 버튼 연속 클릭으로 인한 중복 저장 방지 (5초 이내 동일 내용 재저장 차단)
         signature = (
             str(trade_date),
@@ -172,6 +189,8 @@ if submitted:
                 category_id=category_id,
                 client_id=client_id,
                 work_type_id=work_type_id,
+                account_id=account_id,
+                accounting_type=accounting_type,
                 vat_status=vat_status,
                 evidence_status=evidence_status,
                 memo=memo.strip() if memo else None,

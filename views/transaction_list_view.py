@@ -4,7 +4,14 @@ from datetime import time as dtime
 import pandas as pd
 import streamlit as st
 
-from services import category_service, client_service, transaction_service, work_type_service
+from services import (
+    account_service,
+    category_service,
+    client_service,
+    export_service,
+    transaction_service,
+    work_type_service,
+)
 from utils.formatting import format_amount, parse_amount
 from utils.validators import ValidationError
 
@@ -20,6 +27,7 @@ FILTER_KEYS = [
     "list_category",
     "list_client",
     "list_work_type",
+    "list_accounting_type",
     "list_evidence",
     "list_keyword",
 ]
@@ -46,6 +54,7 @@ st.session_state.setdefault("list_type", "전체")
 st.session_state.setdefault("list_category", "전체")
 st.session_state.setdefault("list_client", "전체")
 st.session_state.setdefault("list_work_type", "전체")
+st.session_state.setdefault("list_accounting_type", "전체")
 st.session_state.setdefault("list_evidence", "전체")
 st.session_state.setdefault("list_keyword", "")
 
@@ -54,6 +63,7 @@ income_categories = category_service.get_income_categories()
 expense_categories = category_service.get_expense_categories()
 all_clients = client_service.get_clients()
 all_work_types = work_type_service.get_work_types()
+all_accounts = account_service.get_accounts()
 
 # 필터는 "과거 거래를 찾아보는" 용도이므로 비활성 기준정보도 포함해서 보여준다
 # (예: 지금은 비활성화된 거래처로 옛날 거래를 검색하고 싶을 수 있다).
@@ -111,6 +121,14 @@ with row2_col3:
 with row2_col4:
     keyword = st.text_input("거래내용 검색", key="list_keyword", placeholder="예: KT")
 
+accounting_type_options = ["전체"] + transaction_service.ACCOUNTING_TYPE_OPTIONS
+row3_col1, _, _, _ = st.columns(4)
+with row3_col1:
+    accounting_type_choice = st.selectbox(
+        "회계구분", accounting_type_options, key="list_accounting_type",
+        help="입금/출금(통장 방향)과는 다른 개념입니다. 매출/비용으로 분류된 거래만 좁혀볼 때 사용하세요.",
+    )
+
 if st.button("필터 초기화"):
     st.session_state["reset_filters"] = True
     st.rerun()
@@ -128,6 +146,8 @@ if client_choice != "전체":
     filters["client_id"] = client_label_to_id[client_choice]
 if work_type_choice != "전체":
     filters["work_type_id"] = work_type_label_to_id[work_type_choice]
+if accounting_type_choice != "전체":
+    filters["accounting_type"] = accounting_type_choice
 if evidence_choice != "전체":
     filters["evidence_status"] = evidence_choice
 if keyword and keyword.strip():
@@ -142,6 +162,34 @@ sum_col1.metric("조회 건수", f"{summary['count']:,}건")
 sum_col2.metric("총수입", f"{format_amount(summary['total_income'])}원")
 sum_col3.metric("총지출", f"{format_amount(summary['total_expense'])}원")
 sum_col4.metric("순금액", f"{format_amount(summary['net_amount'])}원")
+
+st.caption("아래 다운로드 버튼은 현재 적용된 검색/필터 결과만 대상으로 합니다.")
+export_col1, export_col2, export_col3 = st.columns(3)
+export_filename_stamp = date.today().isoformat()
+with export_col1:
+    st.download_button(
+        "⬇️ CSV 다운로드",
+        data=export_service.export_general_csv(filters),
+        file_name=f"거래내역_{export_filename_stamp}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+with export_col2:
+    st.download_button(
+        "⬇️ Excel 다운로드",
+        data=export_service.export_general_excel(filters),
+        file_name=f"거래내역_{export_filename_stamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+with export_col3:
+    st.download_button(
+        "⬇️ 세무사 전달용 Excel",
+        data=export_service.export_tax_excel(filters),
+        file_name=f"세무사전달용_{export_filename_stamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
 st.divider()
 st.subheader("거래 목록")
@@ -251,6 +299,34 @@ def open_edit_dialog(tx: dict) -> None:
         key=f"edit_work_type_{tx_id}",
     )
 
+    accounting_type = st.selectbox(
+        "회계구분",
+        transaction_service.ACCOUNTING_TYPE_OPTIONS,
+        index=transaction_service.ACCOUNTING_TYPE_OPTIONS.index(tx["accounting_type"]),
+        key=f"edit_accounting_type_{tx_id}",
+        help="입금/출금(통장 방향)과는 다른 개념입니다. 매출/비용 여부가 명확하지 않으면 '미분류'로 두세요.",
+    )
+
+    accounts_for_edit = list(all_accounts)
+    if tx["account_id"] is not None and tx["account_id"] not in {a["id"] for a in accounts_for_edit}:
+        inactive_account = account_service.get_account(tx["account_id"])
+        if inactive_account:
+            accounts_for_edit = accounts_for_edit + [inactive_account]
+    account_name_options = {
+        a["name"] if a["is_active"] else f"{a['name']} (비활성)": a for a in accounts_for_edit
+    }
+    account_select_options = ["(선택 안함)"] + list(account_name_options.keys())
+    default_account = next(
+        (label for label, a in account_name_options.items() if a["id"] == tx["account_id"]),
+        "(선택 안함)",
+    )
+    account_choice = st.selectbox(
+        "계정과목",
+        account_select_options,
+        index=account_select_options.index(default_account),
+        key=f"edit_account_{tx_id}",
+    )
+
     vat_status = st.selectbox(
         "부가세 여부",
         transaction_service.VAT_STATUS_OPTIONS,
@@ -284,6 +360,10 @@ def open_edit_dialog(tx: dict) -> None:
             if work_type_choice != "(선택 안함)":
                 work_type_id = work_type_name_options[work_type_choice]["id"]
 
+            account_id = None
+            if account_choice != "(선택 안함)":
+                account_id = account_name_options[account_choice]["id"]
+
             transaction_service.update_transaction(
                 transaction_id=tx_id,
                 transaction_date=str(trade_date),
@@ -295,6 +375,8 @@ def open_edit_dialog(tx: dict) -> None:
                 category_id=category_id,
                 client_id=client_id,
                 work_type_id=work_type_id,
+                account_id=account_id,
+                accounting_type=accounting_type,
                 vat_status=vat_status,
                 evidence_status=evidence_status,
                 memo=memo.strip() if memo else None,
@@ -339,6 +421,8 @@ else:
     df["카테고리"] = df["category_name"].fillna("")
     df["거래처"] = df["client_name"].fillna("")
     df["업무유형"] = df["work_type_name"].fillna("")
+    df["회계구분"] = df["accounting_type"]
+    df["계정과목"] = df["account_name"].fillna("")
     df["부가세"] = df["vat_status"]
     df["증빙"] = df["evidence_status"]
     df["메모"] = df["memo"].fillna("")
@@ -348,7 +432,7 @@ else:
 
     display_columns = [
         "거래일자", "거래시간", "거래내용", "구분", "금액",
-        "카테고리", "거래처", "업무유형", "부가세", "증빙", "메모",
+        "카테고리", "거래처", "업무유형", "회계구분", "계정과목", "부가세", "증빙", "메모",
     ]
 
     st.dataframe(

@@ -32,6 +32,9 @@ def init_db() -> None:
         with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
             conn.executescript(f.read())
         conn.commit()
+
+        from db import migrations
+        migrations.run_migrations(conn)
     finally:
         conn.close()
 
