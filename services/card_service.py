@@ -12,15 +12,18 @@ from datetime import date, datetime, timedelta
 from db import account_repository, card_repository, category_repository
 from db import transaction_repository as tx_repo
 from services import category_rule_service
-from services.transaction_service import ACCOUNTING_TYPE_OPTIONS
+from services.transaction_service import ACCOUNTING_TYPE_OPTIONS, DEFAULT_VAT_STATUS, VAT_STATUS_OPTIONS
 from utils.validators import ValidationError
 
 DEFAULT_CARD_NAME = "신한카드 법인"
 DEFAULT_LINE_ACCOUNTING_TYPE = "미분류"
+DEFAULT_LINE_VAT_STATUS = DEFAULT_VAT_STATUS
 # 이용기간이 끝난 뒤 이 기간 안에 빠져나간 같은 금액의 출금을 카드값 결제 후보로 본다.
 SETTLEMENT_SEARCH_DAYS = 60
 SETTLEMENT_ACCOUNTING_TYPE = "비비용출금"
 SETTLEMENT_ACCOUNT_NAME = "미지급금"
+# 카드값 결제 출금 자체에는 부가세가 없다 (부가세는 카드 사용내역 쪽에 들어 있음).
+SETTLEMENT_VAT_STATUS = "해당없음"
 
 
 def _now() -> str:
@@ -63,6 +66,11 @@ def _validate_accounting_type(accounting_type: str) -> None:
         raise ValidationError("회계구분 값이 올바르지 않습니다.")
 
 
+def _validate_vat_status(vat_status: str) -> None:
+    if vat_status not in VAT_STATUS_OPTIONS:
+        raise ValidationError(f"부가세 여부 값이 올바르지 않습니다 ({', '.join(VAT_STATUS_OPTIONS)} 중 하나).")
+
+
 def normalize_lines(lines: list[dict]) -> list[dict]:
     """입력된 사용내역을 검증/정리한다. 문제가 있으면 몇 번째 줄인지 알려주는 오류를 낸다."""
     normalized = []
@@ -80,6 +88,8 @@ def normalize_lines(lines: list[dict]) -> list[dict]:
                 raise ValidationError("청구금액은 0원일 수 없습니다 (취소·환불은 음수로 입력).")
             accounting_type = line.get("accounting_type") or DEFAULT_LINE_ACCOUNTING_TYPE
             _validate_accounting_type(accounting_type)
+            vat_status = line.get("vat_status") or DEFAULT_LINE_VAT_STATUS
+            _validate_vat_status(vat_status)
             _validate_category(line.get("category_id"), unchanged=False)
             _validate_account(line.get("account_id"), unchanged=False)
             normalized.append(
@@ -90,6 +100,7 @@ def normalize_lines(lines: list[dict]) -> list[dict]:
                     "category_id": line.get("category_id"),
                     "account_id": line.get("account_id"),
                     "accounting_type": accounting_type,
+                    "vat_status": vat_status,
                     "memo": (line.get("memo") or "").strip() or None,
                 }
             )
@@ -170,6 +181,8 @@ def update_classifications(statement_id: int, updates: list[dict]) -> None:
             raise ValidationError("이 명세서에 속하지 않은 사용내역입니다. 화면을 새로고침해주세요.")
         accounting_type = update.get("accounting_type") or DEFAULT_LINE_ACCOUNTING_TYPE
         _validate_accounting_type(accounting_type)
+        vat_status = update.get("vat_status") or original["vat_status"]
+        _validate_vat_status(vat_status)
         _validate_category(update.get("category_id"), unchanged=update.get("category_id") == original["category_id"])
         _validate_account(update.get("account_id"), unchanged=update.get("account_id") == original["account_id"])
         prepared.append(
@@ -178,6 +191,7 @@ def update_classifications(statement_id: int, updates: list[dict]) -> None:
                 "category_id": update.get("category_id"),
                 "account_id": update.get("account_id"),
                 "accounting_type": accounting_type,
+                "vat_status": vat_status,
                 "memo": (update.get("memo") or "").strip() or None,
                 "updated_at": now,
             }
@@ -204,6 +218,8 @@ def suggest_for_merchant(merchant: str) -> dict:
             result["account_id"] = account["id"]
     if suggestion.get("accounting_type"):
         result["accounting_type"] = suggestion["accounting_type"]
+    if suggestion.get("vat_status"):
+        result["vat_status"] = suggestion["vat_status"]
     return result
 
 
@@ -228,8 +244,9 @@ def find_settlement_candidates(statement_id: int) -> list[dict]:
 def link_settlement(statement_id: int, transaction_id: int, reclassify: bool = True) -> None:
     """명세서를 통장의 카드값 결제 출금과 연결한다.
 
-    reclassify=True면 그 출금을 회계구분 '비비용출금' / 계정과목 '미지급금'으로 바꾼다 -
-    실제 비용은 카드 사용내역 쪽에서 잡히므로, 결제 출금까지 비용으로 두면 두 번 계산된다.
+    reclassify=True면 그 출금을 회계구분 '비비용출금' / 계정과목 '미지급금' / 부가세 '해당없음'으로
+    바꾼다 - 실제 비용과 부가세는 카드 사용내역 쪽에서 잡히므로, 결제 출금까지 비용(또는 과세)으로
+    두면 두 번 계산된다.
     """
     statement = card_repository.get_statement_by_id(statement_id)
     if statement is None:
@@ -252,7 +269,9 @@ def link_settlement(statement_id: int, transaction_id: int, reclassify: bool = T
     if reclassify:
         account = account_repository.find_account_by_name_ci(SETTLEMENT_ACCOUNT_NAME)
         account_id = account["id"] if account and account["is_active"] else tx["account_id"]
-        tx_repo.set_accounting_classification(transaction_id, SETTLEMENT_ACCOUNTING_TYPE, account_id, _now())
+        tx_repo.set_accounting_classification(
+            transaction_id, SETTLEMENT_ACCOUNTING_TYPE, account_id, _now(), vat_status=SETTLEMENT_VAT_STATUS
+        )
 
 
 def unlink_settlement(statement_id: int) -> None:
@@ -277,12 +296,13 @@ def get_card_cost_total(start_date: str, end_date: str) -> int:
 # 엑셀/CSV 불러오기 (AI 등으로 만든 파일 -> 입력 표 채우기용. 저장은 하지 않는다)
 # ---------------------------------------------------------------------
 IMPORT_REQUIRED_COLUMNS = ("이용일자", "가맹점명", "청구금액")
-IMPORT_OPTIONAL_COLUMNS = ("카테고리", "회계구분", "계정과목", "메모")
+IMPORT_OPTIONAL_COLUMNS = ("카테고리", "회계구분", "계정과목", "부가세", "메모")
 # 같은 뜻으로 흔히 쓰는 열 이름. '이용금액'은 해외 결제에서 외화 금액이라 일부러 받지 않는다.
 _COLUMN_ALIASES = {
     "이용일": "이용일자", "이용 일자": "이용일자", "거래일자": "이용일자", "일자": "이용일자", "날짜": "이용일자",
     "가맹점": "가맹점명", "가맹점 명": "가맹점명", "사용처": "가맹점명",
     "청구 금액": "청구금액", "청구금액(원)": "청구금액", "금액": "청구금액", "금액(원)": "청구금액",
+    "부가세 여부": "부가세", "부가세여부": "부가세",
 }
 # 명세서의 소계·합계 줄(이용일자 없이 가맹점명 칸에만 글자가 있는 줄)은 사용내역이 아니므로 건너뛴다.
 _SUBTOTAL_MARKERS = ("합계", "소계", "일시불", "할부")
@@ -381,6 +401,11 @@ def parse_lines_file(file_bytes: bytes, filename: str) -> dict:
             raise ValidationError(
                 f"{row_no}행: 회계구분 '{accounting_type}'은(는) 쓸 수 없습니다 ({', '.join(ACCOUNTING_TYPE_OPTIONS)} 중 하나)."
             )
+        vat_status = cell(row, "부가세")
+        if vat_status is not None and vat_status not in VAT_STATUS_OPTIONS:
+            raise ValidationError(
+                f"{row_no}행: 부가세 '{vat_status}'은(는) 쓸 수 없습니다 ({', '.join(VAT_STATUS_OPTIONS)} 중 하나)."
+            )
         rows.append(
             {
                 "이용일자": _import_date(raw_date, row_no),
@@ -389,6 +414,7 @@ def parse_lines_file(file_bytes: bytes, filename: str) -> dict:
                 "카테고리": cell(row, "카테고리"),
                 "회계구분": accounting_type,
                 "계정과목": cell(row, "계정과목"),
+                "부가세": vat_status,
                 "메모": None if cell(row, "메모") is None else str(cell(row, "메모")),
             }
         )
@@ -407,7 +433,7 @@ def build_import_template() -> bytes:
     ws = wb.active
     ws.title = "사용내역"
     ws.append(list(IMPORT_REQUIRED_COLUMNS + IMPORT_OPTIONAL_COLUMNS))
-    for col, width in zip("ABCDEFG", (12, 32, 14, 14, 10, 14, 24)):
+    for col, width in zip("ABCDEFGH", (12, 32, 14, 14, 10, 14, 10, 24)):
         ws.column_dimensions[col].width = width
 
     guide = wb.create_sheet("작성방법")
@@ -417,6 +443,7 @@ def build_import_template() -> bytes:
         ["청구금액: 원 단위 숫자만 (해외 결제는 원화 청구금액, 취소·환불은 음수)"],
         ["소계·합계 줄(일시불, 카드별 소계, 총합계 등)은 넣지 마세요."],
         [f"회계구분: {', '.join(ACCOUNTING_TYPE_OPTIONS)} 중 하나 (비워두면 미분류)"],
+        [f"부가세: {', '.join(VAT_STATUS_OPTIONS)} 중 하나 (비워두면 불명, '과세' = 부가세 10% 포함)"],
         ["예시) 2026-08-07 | 주식회사 아성다이소 | 27000"],
     ):
         guide.append(line)

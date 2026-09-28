@@ -9,11 +9,13 @@ from services import (
     client_service,
     import_service,
     transaction_service,
+    vat_service,
     work_type_service,
 )
 from services.ocr.base import STATUS_NEEDS_REVIEW, STATUS_OK, STATUS_SUSPECTED_DUPLICATE
 from utils.formatting import format_amount, parse_amount
 from utils.validators import ValidationError
+from utils.vat import split_vat
 
 st.title("🏦 통장 가져오기")
 st.caption(
@@ -293,12 +295,29 @@ for line in lines:
                 "계정과목", account_options, index=default_account_idx, key=f"import_account_{line_id}"
             )
 
+            # 부가세 여부 추천: 규칙 값 > (회계구분 매출·비용 + 금액이 11의 배수) > 없음('불명').
+            # 추천값이 바뀌면(회계구분·금액을 고치면) 위젯 key가 바뀌어 새 추천값으로 다시 채워진다.
+            try:
+                amount_for_vat = parse_amount(income_text or expense_text) if (has_income or has_expense) else 0
+            except ValueError:
+                amount_for_vat = 0
+            vat_suggestion = vat_service.suggest_vat_status(
+                amount_for_vat, accounting_type_choice, line.get("suggested_vat_status")
+            )
+            vat_options = transaction_service.VAT_STATUS_OPTIONS
+            default_vat = vat_suggestion["vat_status"] if vat_suggestion else transaction_service.DEFAULT_VAT_STATUS
             vat_status = st.selectbox(
                 "부가세 여부",
-                transaction_service.VAT_STATUS_OPTIONS,
-                index=transaction_service.VAT_STATUS_OPTIONS.index(transaction_service.DEFAULT_VAT_STATUS),
-                key=f"import_vat_{line_id}",
+                vat_options,
+                index=vat_options.index(default_vat),
+                key=f"import_vat_{line_id}_{default_vat}",
+                help="'과세' = 금액에 부가세 10%가 포함됨. 추천값일 뿐이니 확인 후 저장하세요.",
             )
+            if vat_suggestion:
+                st.caption(f"부가세 추천: {vat_suggestion['vat_status']} ({vat_suggestion['reason']})")
+            if vat_status == "과세" and amount_for_vat:
+                supply, vat = split_vat(amount_for_vat)
+                st.caption(f"공급가액 {format_amount(supply)}원 + 부가세 {format_amount(vat)}원")
             evidence_status = st.selectbox(
                 "증빙 여부",
                 transaction_service.EVIDENCE_STATUS_OPTIONS,

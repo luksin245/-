@@ -3,9 +3,10 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from services import account_service, card_service, category_service, transaction_service
+from services import account_service, card_service, category_service, transaction_service, vat_service
 from utils.formatting import format_amount, parse_amount
 from utils.validators import ValidationError
+from utils.vat import VAT_INCLUDED_STATUS, split_vat
 
 st.title("💳 법인카드")
 st.caption(
@@ -47,6 +48,7 @@ def _empty_entry_df() -> pd.DataFrame:
             "카테고리": pd.Series([], dtype="object"),
             "회계구분": pd.Series([], dtype="object"),
             "계정과목": pd.Series([], dtype="object"),
+            "부가세": pd.Series([], dtype="object"),
             "메모": pd.Series([], dtype="object"),
         }
     )
@@ -71,6 +73,10 @@ def _class_column_config(category_options: list[str], account_options: list[str]
             help="카드로 산 물건·서비스는 보통 '비용'입니다. 대표자 개인 사용분 등 확실하지 않으면 '미분류'로 두세요.",
         ),
         "계정과목": st.column_config.SelectboxColumn("계정과목", options=account_options),
+        "부가세": st.column_config.SelectboxColumn(
+            "부가세", options=transaction_service.VAT_STATUS_OPTIONS, default=card_service.DEFAULT_LINE_VAT_STATUS,
+            help="'과세' = 청구금액에 부가세 10%가 포함됨. 모르면 '불명'으로 두세요.",
+        ),
         "메모": st.column_config.TextColumn("메모"),
     }
 
@@ -232,10 +238,20 @@ with btn_suggest:
                 _is_blank(row.get("회계구분")) or row.get("회계구분") == card_service.DEFAULT_LINE_ACCOUNTING_TYPE
             ):
                 filled.at[idx, "회계구분"] = suggestion["accounting_type"]
+            amount = _row_value(row, "청구금액")
+            if amount is not None and (_is_blank(row.get("부가세")) or row.get("부가세") == card_service.DEFAULT_LINE_VAT_STATUS):
+                vat_suggestion = vat_service.suggest_vat_status(
+                    int(amount), filled.at[idx, "회계구분"], suggestion.get("vat_status")
+                )
+                if vat_suggestion:
+                    filled.at[idx, "부가세"] = vat_suggestion["vat_status"]
         st.session_state["card_entry_base"] = filled
         st.session_state["card_entry_version"] += 1
         st.rerun()
-    st.caption("기준정보 관리 → 자동분류 규칙에 등록한 키워드로 추천값만 채웁니다. 저장 전에 확인·수정하세요.")
+    st.caption(
+        "기준정보 관리 → 자동분류 규칙에 등록한 키워드로 추천값만 채웁니다. 부가세는 규칙에 없으면 "
+        "회계구분이 '비용'이고 금액이 11로 나누어떨어질 때 '과세'로 추천합니다. 저장 전에 확인·수정하세요."
+    )
 
 with btn_save:
     if st.button("💾 명세서 저장", type="primary", use_container_width=True, disabled=not filled_rows):
@@ -250,6 +266,7 @@ with btn_save:
                     "category_id": category_name_to_id.get(_row_value(r, "카테고리")),
                     "account_id": account_name_to_id.get(_row_value(r, "계정과목")),
                     "accounting_type": _row_value(r, "회계구분") or card_service.DEFAULT_LINE_ACCOUNTING_TYPE,
+                    "vat_status": _row_value(r, "부가세") or card_service.DEFAULT_LINE_VAT_STATUS,
                     "memo": _row_value(r, "메모"),
                 }
                 for r in filled_rows
@@ -332,6 +349,10 @@ cls_df = pd.DataFrame(
             "카테고리": category_id_to_name.get(l["category_id"]),
             "회계구분": l["accounting_type"],
             "계정과목": account_id_to_name.get(l["account_id"]),
+            "부가세": l["vat_status"],
+            "부가세액": (
+                f"{format_amount(split_vat(l['amount'])[1])}원" if l["vat_status"] == VAT_INCLUDED_STATUS else ""
+            ),
             "메모": l["memo"] or "",
         }
         for l in lines
@@ -339,9 +360,9 @@ cls_df = pd.DataFrame(
 )
 edited_cls = st.data_editor(
     cls_df,
-    column_order=["이용일자", "가맹점명", "청구금액", "카테고리", "회계구분", "계정과목", "메모"],
+    column_order=["이용일자", "가맹점명", "청구금액", "카테고리", "회계구분", "계정과목", "부가세", "부가세액", "메모"],
     column_config=_class_column_config(category_options, account_options),
-    disabled=["이용일자", "가맹점명", "청구금액"],
+    disabled=["이용일자", "가맹점명", "청구금액", "부가세액"],
     hide_index=True,
     use_container_width=True,
     key=f"card_cls_{sid}_{st.session_state['card_detail_version']}",
@@ -356,6 +377,7 @@ if st.button("분류 저장", key=f"card_cls_save_{sid}"):
                     "category_id": category_name_to_id.get(_row_value(r, "카테고리")),
                     "account_id": account_name_to_id.get(_row_value(r, "계정과목")),
                     "accounting_type": _row_value(r, "회계구분") or card_service.DEFAULT_LINE_ACCOUNTING_TYPE,
+                    "vat_status": _row_value(r, "부가세") or card_service.DEFAULT_LINE_VAT_STATUS,
                     "memo": _row_value(r, "메모"),
                 }
                 for r in edited_cls.to_dict("records")
@@ -399,10 +421,10 @@ else:
         )
         reclassify = st.checkbox(
             f"이 출금을 회계구분 '{card_service.SETTLEMENT_ACCOUNTING_TYPE}' / 계정과목 "
-            f"'{card_service.SETTLEMENT_ACCOUNT_NAME}'으로 변경 (권장)",
+            f"'{card_service.SETTLEMENT_ACCOUNT_NAME}' / 부가세 '{card_service.SETTLEMENT_VAT_STATUS}'으로 변경 (권장)",
             value=True,
             key=f"card_reclassify_{sid}",
-            help="카드로 쓴 돈은 위 사용내역에서 비용으로 잡히므로, 카드값을 갚은 통장 출금까지 비용으로 두면 두 번 계산됩니다.",
+            help="카드로 쓴 돈(과 부가세)은 위 사용내역에서 잡히므로, 카드값을 갚은 통장 출금까지 비용으로 두면 두 번 계산됩니다.",
         )
         if st.button("이 출금과 연결", type="primary", key=f"card_link_{sid}"):
             try:

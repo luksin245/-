@@ -115,14 +115,35 @@ st.caption(
     "회계구분을 '비매출입금'으로 지정하면 매출로 집계되지 않습니다. 두 수치는 서로 다른 개념이므로 혼동하지 마세요."
 )
 accounting_summary = data["accounting_summary"]
-acct_col1, acct_col2 = st.columns(2)
+vat = data["vat_summary"]
+acct_col1, acct_col2, acct_col3 = st.columns(3)
 acct_col1.metric("총매출 (회계구분 기준)", f"{format_amount(accounting_summary['total_revenue'])}원")
+if vat["revenue_vat"]:
+    acct_col1.caption(
+        f"공급가액 기준 {format_amount(accounting_summary['total_revenue'] - vat['revenue_vat'])}원 "
+        f"(부가세 {format_amount(vat['revenue_vat'])}원 제외)"
+    )
 acct_col2.metric("총비용 (회계구분 기준)", f"{format_amount(accounting_summary['total_cost'])}원")
 if accounting_summary["card_cost"]:
     acct_col2.caption(
         f"통장 {format_amount(accounting_summary['bank_cost'])}원 + "
         f"법인카드 {format_amount(accounting_summary['card_cost'])}원 (카드는 이용일자 기준)"
     )
+if vat["cost_vat"]:
+    acct_col2.caption(
+        f"공급가액 기준 {format_amount(accounting_summary['total_cost'] - vat['cost_vat'])}원 "
+        f"(부가세 {format_amount(vat['cost_vat'])}원 제외)"
+    )
+payable = vat["estimated_payable"]
+acct_col3.metric(
+    "예상 부가세 납부 (참고용)" if payable >= 0 else "예상 부가세 환급 (참고용)",
+    f"{format_amount(abs(payable))}원",
+    help="부가세 여부가 '과세'인 건만 계산합니다 (매출세액 - 매입세액). 자세한 내용은 '부가세 정리' 화면에서 확인하세요.",
+)
+acct_col3.caption(
+    f"매출세액 {format_amount(vat['sales_vat'])}원 - 매입세액 {format_amount(vat['purchase_vat'])}원"
+    + (f" · '불명' {vat['unknown_count']:,}건 제외" if vat["unknown_count"] else "")
+)
 
 st.divider()
 

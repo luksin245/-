@@ -91,6 +91,7 @@ def process_uploaded_file(file_bytes: bytes, original_filename: str) -> int:
                 "suggested_work_type_id": suggestion["work_type_id"] if suggestion else None,
                 "suggested_account_id": suggestion["account_id"] if suggestion else None,
                 "suggested_accounting_type": suggestion["accounting_type"] if suggestion else None,
+                "suggested_vat_status": suggestion["vat_status"] if suggestion else None,
             }
         )
 

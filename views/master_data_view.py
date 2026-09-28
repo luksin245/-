@@ -594,7 +594,7 @@ elif active_tab == "계정과목":
 else:  # 자동분류 규칙
     st.subheader("자동분류 규칙 관리")
     st.caption(
-        "키워드가 거래내용/거래처명에 포함되면 카테고리/거래처/업무유형/계정과목/회계구분을 "
+        "키워드가 거래내용/거래처명에 포함되면 카테고리/거래처/업무유형/계정과목/회계구분/부가세 여부를 "
         "'추천'만 해줍니다. 통장 가져오기(OCR) 검토 화면에서 추천값으로 미리 채워질 뿐이며, "
         "언제든 다른 값으로 바꿀 수 있고 자동으로 확정 저장되지는 않습니다."
     )
@@ -610,6 +610,8 @@ else:  # 자동분류 규칙
     rule_accounts = account_service.get_accounts()
     rule_account_label_to_id = {a["name"]: a["id"] for a in rule_accounts}
     rule_accounting_type_options = ["(선택 안함)"] + transaction_service.ACCOUNTING_TYPE_OPTIONS
+    rule_vat_status_options = ["(선택 안함)"] + transaction_service.VAT_STATUS_OPTIONS
+    RULE_VAT_HELP = "'과세'는 금액에 부가세 10%가 포함되어 있다는 뜻입니다 (예: CMS사용료, 인증수수료)."
 
     def _resolve_rule_names(rule: dict) -> dict:
         category = category_service.get_category(rule["suggested_category_id"]) if rule["suggested_category_id"] else None
@@ -622,6 +624,7 @@ else:  # 자동분류 규칙
             "work_type": work_type["name"] if work_type else "",
             "account": account["name"] if account else "",
             "accounting_type": rule["suggested_accounting_type"] or "",
+            "vat_status": rule.get("suggested_vat_status") or "",
         }
 
     @st.dialog("새 자동분류 규칙 추가")
@@ -645,6 +648,9 @@ else:  # 자동분류 규칙
         accounting_type_choice = st.selectbox(
             "추천 회계구분", rule_accounting_type_options, key="add_rule_accounting_type"
         )
+        vat_status_choice = st.selectbox(
+            "추천 부가세 여부", rule_vat_status_options, key="add_rule_vat_status", help=RULE_VAT_HELP
+        )
         st.caption("* 표시 항목은 필수입니다. 추천 항목은 최소 1개 이상 선택하는 것을 권장합니다.")
 
         if st.button("추가", type="primary", key="add_rule_submit"):
@@ -660,6 +666,7 @@ else:  # 자동분류 규칙
                     suggested_accounting_type=(
                         accounting_type_choice if accounting_type_choice != "(선택 안함)" else None
                     ),
+                    suggested_vat_status=vat_status_choice if vat_status_choice != "(선택 안함)" else None,
                 )
                 st.session_state["rule_msg"] = f"'{keyword.strip()}' 규칙을 추가했습니다."
                 st.rerun()
@@ -719,6 +726,17 @@ else:  # 자동분류 규칙
             ),
             key=f"edit_rule_accounting_type_{rule['id']}",
         )
+        vat_status_choice = st.selectbox(
+            "추천 부가세 여부",
+            rule_vat_status_options,
+            index=(
+                rule_vat_status_options.index(names["vat_status"])
+                if names["vat_status"] in rule_vat_status_options
+                else 0
+            ),
+            key=f"edit_rule_vat_status_{rule['id']}",
+            help=RULE_VAT_HELP,
+        )
 
         if st.button("저장", type="primary", key=f"edit_rule_submit_{rule['id']}"):
             try:
@@ -734,6 +752,7 @@ else:  # 자동분류 규칙
                     suggested_accounting_type=(
                         accounting_type_choice if accounting_type_choice != "(선택 안함)" else None
                     ),
+                    suggested_vat_status=vat_status_choice if vat_status_choice != "(선택 안함)" else None,
                 )
                 st.session_state["rule_msg"] = f"'{keyword.strip()}' 규칙 정보를 수정했습니다."
                 st.session_state["rule_clear_selection"] = True
@@ -779,6 +798,7 @@ else:  # 자동분류 규칙
                     "추천 업무유형": names["work_type"],
                     "추천 계정과목": names["account"],
                     "추천 회계구분": names["accounting_type"],
+                    "추천 부가세": names["vat_status"],
                     "사용 횟수": r["hit_count"],
                     "상태": "활성" if r["is_active"] else "비활성",
                 }

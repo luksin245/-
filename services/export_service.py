@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from services import card_service, transaction_service
+from services import card_service, transaction_service, vat_service
 
 TYPE_LABELS = {"income": "수입", "expense": "지출"}
 
@@ -22,9 +22,10 @@ GENERAL_COLUMN_WIDTHS = [12, 10, 8, 32, 14, 14, 14, 16, 14, 8, 10, 24]
 
 TAX_COLUMNS = [
     "거래일자", "거래내용", "입금", "출금", "거래처",
-    "회계구분", "계정과목", "업무유형", "부가세 여부", "증빙", "메모",
+    "회계구분", "계정과목", "업무유형", "부가세 여부", "공급가액", "부가세액", "증빙", "메모",
 ]
-TAX_COLUMN_WIDTHS = [12, 32, 14, 14, 16, 10, 14, 14, 10, 10, 24]
+TAX_COLUMN_WIDTHS = [12, 32, 14, 14, 16, 10, 14, 14, 10, 14, 12, 10, 24]
+# 공급가액/부가세액은 부가세 여부가 '과세'인 거래에만 채운다 (금액 ÷ 1.1, 원 미만 반올림).
 
 HEADER_FILL_COLOR = "2A78D6"
 
@@ -131,6 +132,7 @@ def export_tax_excel(filters: dict | None = None) -> bytes:
 
     for t in rows:
         is_income = t["transaction_type"] == "income"
+        supply, vat = vat_service.split_for_display(t["amount"], t["vat_status"])
         ws.append(
             [
                 t["transaction_date"],
@@ -142,12 +144,18 @@ def export_tax_excel(filters: dict | None = None) -> bytes:
                 t["account_name"] or "",
                 t["work_type_name"] or "",
                 t["vat_status"],
+                supply,
+                vat,
                 t["evidence_status"],
                 t["memo"] or "",
             ]
         )
 
     for row in ws.iter_rows(min_row=2, min_col=3, max_col=4):
+        for cell in row:
+            if cell.value is not None:
+                cell.number_format = "#,##0"
+    for row in ws.iter_rows(min_row=2, min_col=10, max_col=11):
         for cell in row:
             if cell.value is not None:
                 cell.number_format = "#,##0"
@@ -162,8 +170,11 @@ def export_tax_excel(filters: dict | None = None) -> bytes:
     return buf.getvalue()
 
 
-CARD_COLUMNS = ["이용일자", "가맹점명", "청구금액", "카테고리", "회계구분", "계정과목", "카드", "명세서 이용기간", "메모"]
-CARD_COLUMN_WIDTHS = [12, 32, 14, 14, 10, 14, 16, 24, 24]
+CARD_COLUMNS = [
+    "이용일자", "가맹점명", "청구금액", "부가세 여부", "공급가액", "부가세액",
+    "카테고리", "회계구분", "계정과목", "카드", "명세서 이용기간", "메모",
+]
+CARD_COLUMN_WIDTHS = [12, 32, 14, 10, 14, 12, 14, 10, 14, 16, 24, 24]
 
 
 def _append_card_sheet(wb: Workbook, filters: dict | None) -> None:
@@ -183,11 +194,15 @@ def _append_card_sheet(wb: Workbook, filters: dict | None) -> None:
     _style_header(ws)
     for line in lines:
         statement = statements.get(line["statement_id"], {})
+        supply, vat = vat_service.split_for_display(line["amount"], line["vat_status"])
         ws.append(
             [
                 line["use_date"],
                 line["merchant"],
                 line["amount"],
+                line["vat_status"],
+                supply,
+                vat,
                 line["category_name"] or "",
                 line["accounting_type"],
                 line["account_name"] or "",
@@ -196,8 +211,9 @@ def _append_card_sheet(wb: Workbook, filters: dict | None) -> None:
                 line["memo"] or "",
             ]
         )
-    for row in ws.iter_rows(min_row=2, min_col=3, max_col=3):
+    for row in ws.iter_rows(min_row=2, min_col=3, max_col=6):
         for cell in row:
-            cell.number_format = "#,##0"
+            if isinstance(cell.value, int):
+                cell.number_format = "#,##0"
     _apply_column_widths(ws, CARD_COLUMN_WIDTHS)
     ws.freeze_panes = "A2"

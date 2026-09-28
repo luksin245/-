@@ -59,4 +59,18 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             "('매출', '비용', '자금이동', '비매출입금', '비비용출금', '미분류'))"
         )
 
+    # 부가세 추천/카드 사용내역 부가세 여부 (부가세 정리 기능).
+    vat_check = "('과세', '면세', '불명', '해당없음')"
+    for table in ("category_rules", "ocr_raw_lines"):
+        if not _has_column(conn, table, "suggested_vat_status"):
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN suggested_vat_status TEXT "
+                f"CHECK (suggested_vat_status IS NULL OR suggested_vat_status IN {vat_check})"
+            )
+    if not _has_column(conn, "card_transactions", "vat_status"):
+        conn.execute(
+            "ALTER TABLE card_transactions ADD COLUMN vat_status TEXT NOT NULL DEFAULT '불명' "
+            f"CHECK (vat_status IN {vat_check})"
+        )
+
     conn.commit()

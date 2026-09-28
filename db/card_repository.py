@@ -24,10 +24,10 @@ def insert_statement_with_lines(statement: dict, lines: list[dict]) -> int:
             """
             INSERT INTO card_transactions (
                 statement_id, use_date, merchant, amount, category_id, account_id,
-                accounting_type, memo, created_at, updated_at
+                accounting_type, vat_status, memo, created_at, updated_at
             ) VALUES (
                 :statement_id, :use_date, :merchant, :amount, :category_id, :account_id,
-                :accounting_type, :memo, :created_at, :updated_at
+                :accounting_type, :vat_status, :memo, :created_at, :updated_at
             )
             """,
             [{**line, "statement_id": statement_id} for line in lines],
@@ -125,19 +125,37 @@ def get_line_by_id(line_id: int) -> dict | None:
 
 
 def update_line_classifications(updates: list[dict]) -> None:
-    """여러 사용내역의 분류(카테고리/계정과목/회계구분/메모)를 한 번에 저장한다."""
+    """여러 사용내역의 분류(카테고리/계정과목/회계구분/부가세 여부/메모)를 한 번에 저장한다."""
     conn = get_connection()
     try:
         conn.executemany(
             """
             UPDATE card_transactions SET
                 category_id = :category_id, account_id = :account_id,
-                accounting_type = :accounting_type, memo = :memo, updated_at = :updated_at
+                accounting_type = :accounting_type, vat_status = :vat_status,
+                memo = :memo, updated_at = :updated_at
             WHERE id = :id
             """,
             updates,
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def set_vat_statuses(updates: list[dict]) -> int:
+    """여러 사용내역의 부가세 여부만 한 번에 바꾼다. updates: [{id, vat_status, updated_at}]"""
+    conn = get_connection()
+    try:
+        cursor = conn.executemany(
+            "UPDATE card_transactions SET vat_status = :vat_status, updated_at = :updated_at WHERE id = :id",
+            updates,
+        )
+        conn.commit()
+        return cursor.rowcount
     except Exception:
         conn.rollback()
         raise

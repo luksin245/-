@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from db import card_repository
 from db import dashboard_repository as dash_repo
 from db import transaction_repository as tx_repo
+from services import vat_service
 
 PERIOD_PRESETS = ["이번 달", "지난달", "최근 3개월", "올해", "직접 선택"]
 
@@ -96,6 +97,7 @@ def get_dashboard_data(start: date, end: date) -> dict:
     return {
         "summary": summary,
         "accounting_summary": accounting_summary,
+        "vat_summary": vat_service.get_summary(start_str, end_str),
         "prev_summary": prev_summary,
         "prev_period": (prev_start, prev_end),
         "monthly_trend": dash_repo.get_monthly_trend(start_str, end_str),

@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS category_rules (
     suggested_accounting_type TEXT
         CHECK (suggested_accounting_type IS NULL OR suggested_accounting_type IN
             ('매출', '비용', '자금이동', '비매출입금', '비비용출금', '미분류')),
+    suggested_vat_status TEXT
+        CHECK (suggested_vat_status IS NULL OR suggested_vat_status IN ('과세', '면세', '불명', '해당없음')),
     hit_count INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
@@ -125,6 +127,8 @@ CREATE TABLE IF NOT EXISTS ocr_raw_lines (
     suggested_accounting_type TEXT
         CHECK (suggested_accounting_type IS NULL OR suggested_accounting_type IN
             ('매출', '비용', '자금이동', '비매출입금', '비비용출금', '미분류')),
+    suggested_vat_status TEXT
+        CHECK (suggested_vat_status IS NULL OR suggested_vat_status IN ('과세', '면세', '불명', '해당없음')),
     is_confirmed INTEGER NOT NULL DEFAULT 0,
     linked_transaction_id INTEGER REFERENCES transactions (id)
 );
@@ -158,6 +162,8 @@ CREATE TABLE IF NOT EXISTS card_transactions (
     account_id INTEGER REFERENCES chart_of_accounts (id),
     accounting_type TEXT NOT NULL DEFAULT '미분류'
         CHECK (accounting_type IN ('매출', '비용', '자금이동', '비매출입금', '비비용출금', '미분류')),
+    -- 부가세 여부. '과세'면 청구금액에 부가세 10%가 포함된 것으로 보고 공급가액/부가세를 나눠 보여준다.
+    vat_status TEXT NOT NULL DEFAULT '불명' CHECK (vat_status IN ('과세', '면세', '불명', '해당없음')),
     memo TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

@@ -78,11 +78,11 @@ def insert_rule(data: dict) -> int:
             INSERT INTO category_rules (
                 keyword, match_field, suggested_category_id, suggested_client_id,
                 suggested_work_type_id, suggested_account_id, suggested_accounting_type,
-                hit_count, is_active, created_at
+                suggested_vat_status, hit_count, is_active, created_at
             ) VALUES (
                 :keyword, :match_field, :suggested_category_id, :suggested_client_id,
                 :suggested_work_type_id, :suggested_account_id, :suggested_accounting_type,
-                0, 1, :created_at
+                :suggested_vat_status, 0, 1, :created_at
             )
             """,
             data,
@@ -104,7 +104,8 @@ def update_rule(rule_id: int, data: dict) -> None:
                 suggested_client_id = :suggested_client_id,
                 suggested_work_type_id = :suggested_work_type_id,
                 suggested_account_id = :suggested_account_id,
-                suggested_accounting_type = :suggested_accounting_type
+                suggested_accounting_type = :suggested_accounting_type,
+                suggested_vat_status = :suggested_vat_status
             WHERE id = :id
             """,
             {**data, "id": rule_id},

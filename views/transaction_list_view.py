@@ -14,6 +14,7 @@ from services import (
 )
 from utils.formatting import format_amount, parse_amount
 from utils.validators import ValidationError
+from utils.vat import vat_of
 
 st.title("📋 거래내역")
 
@@ -338,6 +339,7 @@ def open_edit_dialog(tx: dict) -> None:
         transaction_service.VAT_STATUS_OPTIONS,
         index=transaction_service.VAT_STATUS_OPTIONS.index(tx["vat_status"]),
         key=f"edit_vat_{tx_id}",
+        help="'과세' = 금액에 부가세 10%가 포함됨. 부가세 정리 화면에서 여러 건을 한꺼번에 정할 수도 있습니다.",
     )
     evidence_status = st.selectbox(
         "증빙 여부",
@@ -460,6 +462,9 @@ else:
     df["회계구분"] = df["accounting_type"]
     df["계정과목"] = df["account_name"].fillna("")
     df["부가세"] = df["vat_status"]
+    df["부가세액"] = [
+        f"{format_amount(vat_of(a, s))}원" if s == "과세" else "" for a, s in zip(df["amount"], df["vat_status"])
+    ]
     df["증빙"] = df["evidence_status"]
     df["메모"] = df["memo"].fillna("")
     df["거래일자"] = df["transaction_date"]
@@ -468,7 +473,7 @@ else:
 
     display_columns = [
         "거래일자", "거래시간", "거래내용", "구분", "금액",
-        "카테고리", "거래처", "업무유형", "회계구분", "계정과목", "부가세", "증빙", "메모",
+        "카테고리", "거래처", "업무유형", "회계구분", "계정과목", "부가세", "부가세액", "증빙", "메모",
     ]
 
     # 선택 상태는 "지금 화면에 보이는 목록"에만 유효해야 한다. 필터가 바뀌어 목록이

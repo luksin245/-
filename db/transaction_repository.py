@@ -137,14 +137,73 @@ def find_expenses_by_amount(amount: int, date_from: str, date_to: str) -> list[d
         conn.close()
 
 
-def set_accounting_classification(transaction_id: int, accounting_type: str, account_id: int | None, updated_at: str) -> None:
+def set_accounting_classification(
+    transaction_id: int, accounting_type: str, account_id: int | None, updated_at: str, vat_status: str | None = None
+) -> None:
+    """회계구분/계정과목을 바꾼다. vat_status를 주면 부가세 여부도 함께 바꾼다."""
     conn = get_connection()
     try:
         conn.execute(
-            "UPDATE transactions SET accounting_type = ?, account_id = ?, updated_at = ? WHERE id = ?",
-            (accounting_type, account_id, updated_at, transaction_id),
+            "UPDATE transactions SET accounting_type = ?, account_id = ?, "
+            "vat_status = COALESCE(?, vat_status), updated_at = ? WHERE id = ?",
+            (accounting_type, account_id, vat_status, updated_at, transaction_id),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_unknown_vat_transactions(start_date: str, end_date: str) -> list[dict]:
+    """기간 내 부가세 여부가 '불명'인 거래 (부가세 정리 화면의 추천 확인용)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT t.*, cl.name AS client_name, a.name AS account_name
+            FROM transactions t
+            LEFT JOIN clients cl ON t.client_id = cl.id
+            LEFT JOIN chart_of_accounts a ON t.account_id = a.id
+            WHERE t.vat_status = '불명' AND t.transaction_date BETWEEN ? AND ?
+            ORDER BY t.transaction_date, t.transaction_time, t.id
+            """,
+            (start_date, end_date),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_vat_relevant_rows(start_date: str, end_date: str) -> list[dict]:
+    """부가세 집계용: 기간 내 '과세' 거래와, 아직 '불명'인 매출·비용 거래의 최소 정보만 가져온다."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT transaction_type, accounting_type, vat_status, amount
+            FROM transactions
+            WHERE transaction_date BETWEEN ? AND ?
+              AND (vat_status = '과세' OR (vat_status = '불명' AND accounting_type IN ('매출', '비용')))
+            """,
+            (start_date, end_date),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_vat_statuses(updates: list[dict]) -> int:
+    """여러 거래의 부가세 여부만 한 번에 바꾼다 (다른 값은 건드리지 않음). updates: [{id, vat_status, updated_at}]"""
+    conn = get_connection()
+    try:
+        cursor = conn.executemany(
+            "UPDATE transactions SET vat_status = :vat_status, updated_at = :updated_at WHERE id = :id",
+            updates,
+        )
+        conn.commit()
+        return cursor.rowcount
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

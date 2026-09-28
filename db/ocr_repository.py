@@ -73,19 +73,20 @@ def insert_raw_line(data: dict) -> int:
                 document_id, line_no, raw_date, raw_time, raw_description,
                 raw_income, raw_expense, raw_balance, confidence, status,
                 suggested_category_id, suggested_client_id, suggested_work_type_id,
-                suggested_account_id, suggested_accounting_type,
+                suggested_account_id, suggested_accounting_type, suggested_vat_status,
                 is_confirmed, linked_transaction_id
             ) VALUES (
                 :document_id, :line_no, :raw_date, :raw_time, :raw_description,
                 :raw_income, :raw_expense, :raw_balance, :confidence, :status,
                 :suggested_category_id, :suggested_client_id, :suggested_work_type_id,
-                :suggested_account_id, :suggested_accounting_type,
+                :suggested_account_id, :suggested_accounting_type, :suggested_vat_status,
                 0, NULL
             )
             """,
             {
                 "suggested_account_id": None,
                 "suggested_accounting_type": None,
+                "suggested_vat_status": None,
                 **data,
             },
         )
