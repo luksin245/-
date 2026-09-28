@@ -203,6 +203,12 @@ pip install -r requirements.txt
 카테고리/업무유형/거래처가 지정되지 않은 거래는 '미분류'로 합산되어 함께 표시됩니다
 (제외되지 않습니다).
 
+**업무유형별 매출 / 거래처별 매출 TOP 10** 차트는 통장 입금 중 회계구분이 **'매출'이거나
+아직 정하지 않은('미분류')** 거래만 합산합니다. 대표자 가수금(비매출입금), 계좌 간
+이체(자금이동)처럼 매출이 아니라고 표시한 입금은 이 두 차트에서 빠집니다. 반면
+**총수입·순현금흐름·월별 추이는 통장 기준**이라 이런 입금도 그대로 포함됩니다(잔액과
+맞아야 하기 때문).
+
 ### 최근 거래내역
 
 대시보드 맨 아래에 선택 기간 기준 최근 거래 10건을 보여줍니다.
@@ -480,6 +486,7 @@ python tests/test_stage4.py
 python tests/test_stage5.py
 python tests/test_stage5_performance.py
 python tests/test_stage6.py
+python tests/test_stage7.py
 ```
 
 모든 스크립트는 `tests/` 폴더 아래에 임시 DB 파일을 만들어 사용하고, 종료 시 자동으로

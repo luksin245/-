@@ -12,6 +12,12 @@ from db.database import get_connection
 
 UNCLASSIFIED_LABEL = "미분류"
 
+# "매출" 차트(업무유형별/거래처별)에 포함할 입금의 회계구분.
+# 대표자 가수금(비매출입금)·계좌 간 이체(자금이동)처럼 매출이 아니라고 표시한 입금은 빼고,
+# 아직 회계구분을 정하지 않은 입금(미분류)은 분류 전에도 차트가 비지 않도록 포함한다.
+REVENUE_CHART_ACCOUNTING_TYPES = ("매출", "미분류")
+_REVENUE_FILTER_SQL = f"t.accounting_type IN ({', '.join('?' for _ in REVENUE_CHART_ACCOUNTING_TYPES)})"
+
 
 def get_monthly_trend(start_date: str, end_date: str) -> list[dict]:
     """월(YYYY-MM)별 수입 합계 / 지출 합계."""
@@ -56,7 +62,10 @@ def get_expense_by_category(start_date: str, end_date: str) -> list[dict]:
 
 
 def get_income_by_work_type(start_date: str, end_date: str) -> list[dict]:
-    """업무유형별 수입 합계 (금액 큰 순). 업무유형 없는 수입은 '미분류'로 묶는다."""
+    """업무유형별 매출 합계 (금액 큰 순). 업무유형 없는 입금은 '미분류'로 묶는다.
+
+    매출이 아니라고 회계구분을 지정한 입금은 제외한다 (REVENUE_CHART_ACCOUNTING_TYPES 참고).
+    """
     conn = get_connection()
     try:
         rows = conn.execute(
@@ -65,10 +74,11 @@ def get_income_by_work_type(start_date: str, end_date: str) -> list[dict]:
             FROM transactions t
             LEFT JOIN work_types w ON t.work_type_id = w.id
             WHERE t.transaction_type = 'income' AND t.transaction_date BETWEEN ? AND ?
+              AND {_REVENUE_FILTER_SQL}
             GROUP BY work_type_name
             ORDER BY total DESC
             """,
-            (start_date, end_date),
+            (start_date, end_date, *REVENUE_CHART_ACCOUNTING_TYPES),
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -76,7 +86,10 @@ def get_income_by_work_type(start_date: str, end_date: str) -> list[dict]:
 
 
 def get_income_by_client(start_date: str, end_date: str, limit: int = 10) -> list[dict]:
-    """거래처별 수입 합계 TOP N (금액 큰 순). 거래처 없는 수입도 '미분류'로 포함한다."""
+    """거래처별 매출 합계 TOP N (금액 큰 순). 거래처 없는 입금도 '미분류'로 포함한다.
+
+    매출이 아니라고 회계구분을 지정한 입금은 제외한다 (REVENUE_CHART_ACCOUNTING_TYPES 참고).
+    """
     conn = get_connection()
     try:
         rows = conn.execute(
@@ -85,11 +98,12 @@ def get_income_by_client(start_date: str, end_date: str, limit: int = 10) -> lis
             FROM transactions t
             LEFT JOIN clients cl ON t.client_id = cl.id
             WHERE t.transaction_type = 'income' AND t.transaction_date BETWEEN ? AND ?
+              AND {_REVENUE_FILTER_SQL}
             GROUP BY client_name
             ORDER BY total DESC
             LIMIT ?
             """,
-            (start_date, end_date, limit),
+            (start_date, end_date, *REVENUE_CHART_ACCOUNTING_TYPES, limit),
         ).fetchall()
         return [dict(row) for row in rows]
     finally:

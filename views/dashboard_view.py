@@ -193,10 +193,15 @@ st.divider()
 
 # ---------- 차트 3: 업무유형별 매출 ----------
 st.subheader("업무유형별 매출")
+REVENUE_CHART_CAPTION = (
+    "통장 입금 중 회계구분이 '매출'이거나 아직 정하지 않은('미분류') 거래만 합산합니다. "
+    "대표자 가수금(비매출입금)·계좌 간 이체(자금이동) 등 매출이 아니라고 표시한 입금은 제외됩니다."
+)
+st.caption(REVENUE_CHART_CAPTION)
 
 work_type_rows = data["income_by_work_type"]
 if not work_type_rows:
-    st.info("수입 데이터가 없습니다.")
+    st.info("표시할 매출 데이터가 없습니다.")
 else:
     wt_df = pd.DataFrame(work_type_rows).sort_values("total", ascending=True)
     wt_df["표시"] = wt_df["total"].apply(lambda v: f"{format_amount(v)}원")
@@ -227,11 +232,11 @@ st.divider()
 
 # ---------- 차트 4: 거래처별 매출 TOP 10 ----------
 st.subheader("거래처별 매출 TOP 10")
-st.caption("거래처가 지정되지 않은 수입 거래는 '미분류'로 합산해 함께 표시합니다.")
+st.caption(REVENUE_CHART_CAPTION + " 거래처가 지정되지 않은 입금은 '미분류'로 합산합니다.")
 
 client_rows = data["income_by_client"]
 if not client_rows:
-    st.info("수입 데이터가 없습니다.")
+    st.info("표시할 매출 데이터가 없습니다.")
 else:
     client_df = pd.DataFrame(client_rows).sort_values("total", ascending=True)
     client_df["표시"] = client_df["total"].apply(lambda v: f"{format_amount(v)}원")
