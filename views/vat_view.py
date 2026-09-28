@@ -6,7 +6,6 @@ import streamlit as st
 from services import transaction_service, vat_service
 from utils.formatting import format_amount
 from utils.validators import ValidationError
-from utils.vat import split_vat
 
 st.title("🧾 부가세 정리")
 st.caption(
@@ -15,7 +14,6 @@ st.caption(
     "접대비처럼 공제받지 못하는 매입세액도 여기서는 구분하지 않습니다."
 )
 
-TYPE_LABELS = {"income": "입금", "expense": "출금"}
 VAT_OPTIONS = transaction_service.VAT_STATUS_OPTIONS
 UNKNOWN = transaction_service.DEFAULT_VAT_STATUS
 
@@ -62,112 +60,105 @@ st.caption(
 )
 if summary["unknown_count"]:
     st.warning(
-        f"부가세 여부가 아직 '불명'인 매출·비용 {summary['unknown_count']:,}건은 위 계산에서 빠져 있습니다. "
-        "아래에서 확인해 정리하면 더 정확해집니다."
+        f"이 기간에 부가세 여부가 아직 '불명'인 매출·비용 {summary['unknown_count']:,}건은 위 계산에서 빠져 있습니다. "
+        "아래에서 정리하면 더 정확해집니다."
     )
 
 st.divider()
 
 
-def _review_table(rows: list[dict], columns: dict, key: str) -> pd.DataFrame:
-    """추천값을 미리 채운 편집 표. '부가세' 열만 바꿀 수 있다."""
+def _review_section(title: str, review: dict, key: str, apply_fn, name_label: str) -> None:
+    """상대방(거래처·가맹점)별 묶음 표. 묶음마다 부가세 여부를 한 번만 정하면 그 안의 거래 전부에 저장된다."""
+    st.subheader(title)
+    groups = review["groups"]
+    if not groups:
+        st.success("부가세 여부가 '불명'인 항목이 없습니다.")
+        return
+
+    no_suggestion = [g for g in groups if not g["suggested_vat_status"]]
+    st.caption(
+        f"기간과 상관없이 아직 '불명'인 {review['row_count']:,}건을 {len(groups):,}개 묶음으로 모았습니다. "
+        "추천값이 미리 채워져 있으니 **틀린 묶음만 바꾸고 저장 버튼을 한 번** 누르면 됩니다. "
+        "한 번 정한 거래처·가맹점은 다음부터 같은 값으로 추천됩니다."
+    )
+    if no_suggestion:
+        st.info(
+            f"추천할 근거가 없는 묶음 {len(no_suggestion):,}개가 표 맨 위에 있습니다. "
+            "직접 고르거나, 모르면 '불명'으로 두세요 ('불명'은 저장하지 않습니다)."
+        )
+
     table = pd.DataFrame(
         [
             {
-                "id": r["id"],
-                **{label: getter(r) for label, getter in columns.items()},
-                "부가세": r["suggested_vat_status"] or UNKNOWN,
-                "추천 근거": r["suggest_reason"],
-                "과세일 때 부가세": f"{format_amount(split_vat(r['amount'])[1])}원",
+                name_label: g["label"],
+                "구분": g["direction"],
+                "건수": g["count"],
+                "합계": f"{format_amount(g['total'])}원",
+                "기간": g["period"],
+                "부가세": g["suggested_vat_status"] or UNKNOWN,
+                "추천 근거": g["reason"] or "-",
             }
-            for r in rows
+            for g in groups
         ]
     )
-    shown = list(columns) + ["부가세", "추천 근거", "과세일 때 부가세"]
-    return st.data_editor(
+    columns = [name_label, "구분", "건수", "합계", "기간", "부가세", "추천 근거"]
+    if key == "vat_card":
+        columns.remove("구분")
+    edited = st.data_editor(
         table,
-        column_order=shown,
+        column_order=columns,
         column_config={
             "부가세": st.column_config.SelectboxColumn(
                 "부가세", options=VAT_OPTIONS, required=True,
-                help="'과세' = 금액에 부가세 10% 포함. '불명'으로 두면 저장하지 않습니다.",
+                help="'과세' = 금액에 부가세 10% 포함. '해당없음' = 부가세와 무관한 돈(이자·세금·가수금 등).",
             ),
         },
-        disabled=[c for c in shown if c != "부가세"],
+        disabled=[c for c in columns if c != "부가세"],
         hide_index=True,
         use_container_width=True,
-        key=f"{key}_{st.session_state['vat_version']}",
+        key=f"{key}_groups_{st.session_state['vat_version']}",
     )
 
+    to_save = []
+    for group, status in zip(groups, edited["부가세"].tolist()):
+        if status and status != UNKNOWN:
+            to_save.extend({"id": i, "vat_status": status} for i in group["ids"])
 
-def _review_section(title: str, review: dict, columns: dict, key: str, apply_fn, unclassified_hint: str) -> None:
-    st.subheader(title)
-    rows = review["rows"]
-    if not rows:
-        st.success("이 기간에 부가세 여부가 '불명'인 항목이 없습니다.")
-        return
-    suggested = [r for r in rows if r["suggested_vat_status"]]
-    only_suggested = st.checkbox(
-        f"추천이 있는 항목만 보기 ({len(suggested):,}건 / 전체 '불명' {len(rows):,}건)",
-        value=bool(suggested),
-        key=f"{key}_only_suggested",
-    )
-    shown_rows = suggested if only_suggested else rows
-    if not shown_rows:
-        st.info("추천할 수 있는 항목이 없습니다. 체크를 풀면 전체 '불명' 항목을 직접 정할 수 있습니다.")
-    else:
-        st.caption(
-            "추천값이 '부가세' 칸에 미리 채워져 있습니다. 확인하고 틀린 것은 바꾼 뒤 저장하세요. "
-            "'불명'으로 둔 줄은 저장하지 않습니다."
+    if st.button(
+        f"💾 이대로 한꺼번에 저장 ({len(to_save):,}건)", type="primary", disabled=not to_save, key=f"{key}_save"
+    ):
+        try:
+            saved = apply_fn(to_save)
+            st.session_state["vat_msg"] = f"{title.split('. ', 1)[-1]}: {saved:,}건의 부가세 여부를 저장했습니다."
+            st.session_state["vat_version"] += 1
+            st.rerun()
+        except ValidationError as e:
+            st.error(str(e))
+
+    with st.expander("묶음 안의 거래 하나하나 보기"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        name_label: g["label"],
+                        "날짜": r["_date"],
+                        "내용": r.get("description") or r.get("merchant"),
+                        "금액": f"{format_amount(r['amount'])}원",
+                        "회계구분": r["accounting_type"],
+                        "추천": g["suggested_vat_status"] or "-",
+                    }
+                    for g in groups
+                    for r in g["rows"]
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
         )
-        # 보기 범위가 바뀌면 표의 줄 구성이 달라지므로 key를 바꿔 이전 편집이 엉뚱한 줄에 남지 않게 한다.
-        edited = _review_table(shown_rows, columns, f"{key}_{int(only_suggested)}")
-        to_save = [
-            {"id": int(r["id"]), "vat_status": r["부가세"]}
-            for r in edited.to_dict("records")
-            if r["부가세"] and r["부가세"] != UNKNOWN
-        ]
-        if st.button(f"💾 부가세 여부 저장 ({len(to_save):,}건)", type="primary", disabled=not to_save, key=f"{key}_save"):
-            try:
-                saved = apply_fn(to_save)
-                st.session_state["vat_msg"] = f"{title.split('. ', 1)[-1]}: {saved:,}건의 부가세 여부를 저장했습니다."
-                st.session_state["vat_version"] += 1
-                st.rerun()
-            except ValidationError as e:
-                st.error(str(e))
-    if review["unclassified_count"]:
-        st.caption(unclassified_hint.format(n=review["unclassified_count"]))
+        st.caption("묶음 안에서 한 건만 다르게 정하려면 거래내역(또는 법인카드) 화면에서 그 거래만 수정하세요.")
 
 
-_review_section(
-    "1. 통장 거래",
-    vat_service.get_bank_review(start_str, end_str),
-    {
-        "거래일자": lambda r: r["transaction_date"],
-        "거래내용": lambda r: r["description"],
-        "거래처": lambda r: r["client_name"] or "",
-        "구분": lambda r: TYPE_LABELS[r["transaction_type"]],
-        "금액": lambda r: f"{format_amount(r['amount'])}원",
-        "회계구분": lambda r: r["accounting_type"],
-    },
-    "vat_bank",
-    vat_service.apply_bank_vat,
-    "회계구분이 '미분류'인 거래 {n:,}건은 금액만 보고 추천하지 않습니다 (이자·가수금 같은 입금도 11로 나누어떨어질 수 "
-    "있기 때문). 거래내역에서 회계구분을 매출/비용으로 정하면 추천됩니다.",
-)
+_review_section("1. 통장 거래", vat_service.get_bank_review(), "vat_bank", vat_service.apply_bank_vat, "거래처/내용")
 
 st.divider()
 
-_review_section(
-    "2. 법인카드 사용내역",
-    vat_service.get_card_review(start_str, end_str),
-    {
-        "이용일자": lambda r: r["use_date"],
-        "가맹점명": lambda r: r["merchant"],
-        "청구금액": lambda r: f"{format_amount(r['amount'])}원",
-        "회계구분": lambda r: r["accounting_type"],
-    },
-    "vat_card",
-    vat_service.apply_card_vat,
-    "회계구분이 '미분류'인 카드 사용내역 {n:,}건은 금액만 보고 추천하지 않습니다. 법인카드 화면에서 회계구분을 정하면 추천됩니다.",
-)
+_review_section("2. 법인카드 사용내역", vat_service.get_card_review(), "vat_card", vat_service.apply_card_vat, "가맹점")

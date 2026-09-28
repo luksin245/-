@@ -167,6 +167,7 @@ def _save_review_line(line: dict, values: dict) -> None:
     )
 
 
+vat_ctx = vat_service.load_context()  # 부가세 추천용 자료는 화면을 그릴 때 한 번만 읽는다
 selected_line_ids: list[int] = []
 normal_line_ids: list[int] = []
 line_values: dict[int, dict] = {}
@@ -295,14 +296,14 @@ for line in lines:
                 "계정과목", account_options, index=default_account_idx, key=f"import_account_{line_id}"
             )
 
-            # 부가세 여부 추천: 규칙 값 > (회계구분 매출·비용 + 금액이 11의 배수) > 없음('불명').
+            # 부가세 여부 추천 (규칙 > 예전에 같은 거래를 저장한 값 > 이자·세금 등 '해당없음' > 11의 배수 '과세').
             # 추천값이 바뀌면(회계구분·금액을 고치면) 위젯 key가 바뀌어 새 추천값으로 다시 채워진다.
             try:
                 amount_for_vat = parse_amount(income_text or expense_text) if (has_income or has_expense) else 0
             except ValueError:
                 amount_for_vat = 0
-            vat_suggestion = vat_service.suggest_vat_status(
-                amount_for_vat, accounting_type_choice, line.get("suggested_vat_status")
+            vat_suggestion = vat_service.suggest_for_bank(
+                vat_ctx, row_description, amount_for_vat, accounting_type_choice
             )
             vat_options = transaction_service.VAT_STATUS_OPTIONS
             default_vat = vat_suggestion["vat_status"] if vat_suggestion else transaction_service.DEFAULT_VAT_STATUS

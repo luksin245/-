@@ -153,8 +153,8 @@ def set_accounting_classification(
         conn.close()
 
 
-def get_unknown_vat_transactions(start_date: str, end_date: str) -> list[dict]:
-    """기간 내 부가세 여부가 '불명'인 거래 (부가세 정리 화면의 추천 확인용)."""
+def get_unknown_vat_transactions() -> list[dict]:
+    """부가세 여부가 아직 '불명'인 모든 거래 (부가세 정리 화면의 추천 확인용)."""
     conn = get_connection()
     try:
         rows = conn.execute(
@@ -163,10 +163,22 @@ def get_unknown_vat_transactions(start_date: str, end_date: str) -> list[dict]:
             FROM transactions t
             LEFT JOIN clients cl ON t.client_id = cl.id
             LEFT JOIN chart_of_accounts a ON t.account_id = a.id
-            WHERE t.vat_status = '불명' AND t.transaction_date BETWEEN ? AND ?
+            WHERE t.vat_status = '불명'
             ORDER BY t.transaction_date, t.transaction_time, t.id
-            """,
-            (start_date, end_date),
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_decided_vat_history() -> list[dict]:
+    """부가세 여부를 이미 정한(불명이 아닌) 거래들. 오래된 것부터 - 뒤에 나온 값이 최근 결정이다."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT description, client_id, vat_status FROM transactions "
+            "WHERE vat_status <> '불명' ORDER BY updated_at, id"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:

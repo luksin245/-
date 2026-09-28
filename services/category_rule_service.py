@@ -6,6 +6,7 @@ UI에서 추천값은 어디까지나 미리 채워주는 기본값일 뿐이며
 선택하면 그 선택이 그대로 유지된다.
 """
 import sqlite3
+import unicodedata
 from datetime import datetime
 
 from db import category_rule_repository as repo
@@ -112,6 +113,10 @@ def activate_rule(rule_id: int) -> None:
     repo.set_rule_active(rule_id, True)
 
 
+def _fold(text: str | None) -> str:
+    return unicodedata.normalize("NFKC", text or "").lower()
+
+
 def load_active_rules() -> list[dict]:
     """여러 건을 한꺼번에 추천할 때 규칙을 한 번만 읽어 suggest_for(rules=...)에 넘기기 위한 함수."""
     return repo.get_active_rules_for_matching()
@@ -124,13 +129,14 @@ def suggest_for(description: str | None, client_name: str | None, rules: list[di
     매칭되는 규칙이 없으면 None을 반환한다 - 이 경우 호출부는 추천값 없이
     그대로 두어야 하며 절대로 값을 지어내면 안 된다.
     """
-    description = description or ""
-    client_name = client_name or ""
+    # 은행 PDF는 'ＣＭＳ사용료'처럼 전각 글자를 쓰기도 하므로 NFKC로 맞춘 뒤 비교한다.
+    description = _fold(description)
+    client_name = _fold(client_name)
 
     candidates = []
     for rule in rules if rules is not None else repo.get_active_rules_for_matching():
         haystack = description if rule["match_field"] == "description" else client_name
-        if rule["keyword"] and rule["keyword"].lower() in haystack.lower():
+        if rule["keyword"] and _fold(rule["keyword"]) in haystack:
             candidates.append(rule)
 
     if not candidates:

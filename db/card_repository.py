@@ -146,6 +146,18 @@ def update_line_classifications(updates: list[dict]) -> None:
         conn.close()
 
 
+def get_decided_vat_history() -> list[dict]:
+    """부가세 여부를 이미 정한 카드 사용내역 (오래된 것부터)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT merchant, vat_status FROM card_transactions WHERE vat_status <> '불명' ORDER BY updated_at, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def set_vat_statuses(updates: list[dict]) -> int:
     """여러 사용내역의 부가세 여부만 한 번에 바꾼다. updates: [{id, vat_status, updated_at}]"""
     conn = get_connection()

@@ -225,6 +225,7 @@ btn_suggest, btn_save = st.columns(2)
 with btn_suggest:
     if st.button("✨ 자동분류 규칙으로 빈 칸 채우기", use_container_width=True, disabled=not filled_rows):
         filled = entry_df.copy()
+        vat_ctx = vat_service.load_context()
         for idx, row in filled.iterrows():
             merchant = _row_value(row, "가맹점명")
             if not merchant:
@@ -240,8 +241,9 @@ with btn_suggest:
                 filled.at[idx, "회계구분"] = suggestion["accounting_type"]
             amount = _row_value(row, "청구금액")
             if amount is not None and (_is_blank(row.get("부가세")) or row.get("부가세") == card_service.DEFAULT_LINE_VAT_STATUS):
-                vat_suggestion = vat_service.suggest_vat_status(
-                    int(amount), filled.at[idx, "회계구분"], suggestion.get("vat_status")
+                accounting_type = filled.at[idx, "회계구분"]
+                vat_suggestion = vat_service.suggest_for_card(
+                    vat_ctx, str(merchant), int(amount), None if _is_blank(accounting_type) else accounting_type
                 )
                 if vat_suggestion:
                     filled.at[idx, "부가세"] = vat_suggestion["vat_status"]
@@ -249,8 +251,8 @@ with btn_suggest:
         st.session_state["card_entry_version"] += 1
         st.rerun()
     st.caption(
-        "기준정보 관리 → 자동분류 규칙에 등록한 키워드로 추천값만 채웁니다. 부가세는 규칙에 없으면 "
-        "회계구분이 '비용'이고 금액이 11로 나누어떨어질 때 '과세'로 추천합니다. 저장 전에 확인·수정하세요."
+        "기준정보 관리 → 자동분류 규칙에 등록한 키워드로 추천값만 채웁니다. 부가세는 규칙·예전에 저장한 같은 "
+        "가맹점 값을 따르고, 없으면 국내 결제는 '과세', 해외 결제는 '해당없음'으로 추천합니다. 저장 전에 확인·수정하세요."
     )
 
 with btn_save:

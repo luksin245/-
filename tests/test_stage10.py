@@ -121,10 +121,22 @@ def main() -> bool:
 
     # ---------------- 추천 규칙 ----------------
     s = vat_service.suggest_vat_status
-    check("7. 매출·비용 + 11의 배수면 '과세' 추천", s(110_000, "매출") == {"vat_status": "과세", "reason": vat_service.REASON_AMOUNT})
-    check("8. 이자(비매출입금)·가수금은 11의 배수여도 추천 안 함", s(418, "비매출입금") is None and s(2_200_000, "비매출입금") is None)
-    check("9. 회계구분 미분류면 금액만으로 추천 안 함", s(55_000, "미분류") is None)
-    check("10. 규칙에 부가세 여부가 있으면 그 값이 우선", s(110_000, "비용", "면세") == {"vat_status": "면세", "reason": vat_service.REASON_RULE})
+    check("7. 통장: 11의 배수면 회계구분이 미분류여도 '과세' 추천",
+          s(110_000, "매출")["vat_status"] == "과세" and s(55_000, "미분류", text="타행MB 김봉수")["vat_status"] == "과세")
+    check("8. 이자·가수금·카드값·세금은 11의 배수여도 '해당없음' 추천",
+          all(s(amount, "미분류", text=text)["vat_status"] == "해당없음" for amount, text in [
+              (418, "이자 06.20~09.18"), (2_200_000, "타행IB 대표자가수금"),
+              (86_757, "카드결 신한카드법인"), (248_880, "국세 동화성세무서")]))
+    check("9. 회계구분이 비매출입금·자금이동이면 '해당없음', 근거 없는 금액(62,500)은 추천 없음",
+          s(1_100_000, "비매출입금", text="홍길동")["vat_status"] == "해당없음"
+          and s(62_500, "비용", text="BZ뱅크 화성동탄(노무") is None)
+    check("10. 우선순위: 규칙 > 예전에 저장한 값 > 이자 등 단어",
+          s(110_000, "비용", "면세")["reason"] == vat_service.REASON_RULE
+          and s(418, "미분류", None, "과세", text="이자")["reason"] == vat_service.REASON_HISTORY)
+    check("10-카드. 국내 결제는 11의 배수가 아니어도 '과세'(다이소 27,000원), 해외는 '해당없음', 연회비는 '해당없음'",
+          s(27_000, "미분류", text="주식회사 아성다이소", kind="card")["vat_status"] == "과세"
+          and s(28_457, "비용", text="GAKJA* SOFTWARE", kind="card")["vat_status"] == "해당없음"
+          and s(10_000, "비용", text="연회비", kind="card")["vat_status"] == "해당없음")
 
     check_migration()
 
@@ -136,6 +148,8 @@ def main() -> bool:
         keyword="CMS사용료", suggested_accounting_type="비용", suggested_vat_status="과세"
     )
     check("11. 규칙에 추천 부가세 여부 저장/추천", category_rule_service.suggest_for("FB자동 CMS사용료", None)["vat_status"] == "과세")
+    check("11-전각. 은행 PDF의 전각 글자 'ＣＭＳ사용료'도 규칙 'CMS사용료'와 매칭",
+          (category_rule_service.suggest_for("FB자동 ＣＭＳ사용료", None) or {}).get("vat_status") == "과세")
     expect_error("12. 잘못된 추천 부가세 값 거부",
                  lambda: category_rule_service.create_rule(keyword="x", suggested_vat_status="10%"))
 
@@ -146,32 +160,53 @@ def main() -> bool:
             accounting_type=acct,
         )
 
+    # 실제 통장 PDF의 거래내용 형태(적요 + 내용)를 본뜬 가짜 거래. 대부분 회계구분 '미분류'.
     t_sales = tx(4, "income", "FB자금 CMS집금", 329_725, "매출")
-    t_interest = tx(19, "income", "이자", 418, "비매출입금")
+    t_sales2 = tx(8, "income", "FB자금 CMS집금", 175_725, "미분류")
+    tx(19, "income", "이자 06.20~09.18", 418, "미분류")
+    tx(20, "income", "이자 06.09~06.19", 29, "미분류")
     t_fee = tx(7, "expense", "FB자동 CMS사용료", 110, "미분류")
-    t_loan = tx(10, "income", "대표자 가수금", 2_200_000, "비매출입금")
-    t_labor = tx(19, "expense", "화성동탄 노무", 62_500, "비용")
-    t_unclassified = tx(15, "income", "김봉수", 55_000, "미분류")
+    t_loan = tx(10, "income", "타행IB 대표자가수금", 2_200_000, "미분류")
+    t_labor = tx(19, "expense", "BZ뱅크 화성동탄(노무", 62_500, "비용")
+    tx(12, "expense", "BZ뱅크 노무법인 돋움", 70_400, "미분류")
+    tx(21, "expense", "FB자동 노무법인돋움", 192_500, "미분류")
     t_card = tx(15, "expense", "카드결 신한카드법인", 83_754, "비용")  # 아래 명세서 총합계와 같은 금액
 
-    review = vat_service.get_bank_review("2026-07-01", "2026-09-30")
-    by_id = {r["id"]: r for r in review["rows"]}
-    check("13. 추천: CMS집금(매출, 11의 배수) 과세 / CMS사용료(규칙) 과세",
-          by_id[t_sales]["suggested_vat_status"] == "과세" and by_id[t_fee]["suggest_reason"] == vat_service.REASON_RULE)
-    check("14. 이자·가수금·11의 배수가 아닌 노무비·미분류 입금은 추천 없음",
-          all(by_id[i]["suggested_vat_status"] is None for i in (t_interest, t_loan, t_labor, t_unclassified)))
-    check("15. 회계구분 미분류라서 추천 못 한 건수 안내(1건)", review["unclassified_count"] == 1)
-    check("16. 카드값 결제 출금 83,754원(비용)도 11의 배수라 과세로 추천됨 -> 명세서 연결로 정리해야 함",
-          by_id[t_card]["suggested_vat_status"] == "과세")
+    review = vat_service.get_bank_review()
+    groups = {(vat_service.normalize_key(g["label"]), g["direction"]): g for g in review["groups"]}
+    cms, interest, nomu = groups[("cms집금", "입금")], groups[("이자", "입금")], groups[("노무법인돋움", "출금")]
+    check("13. 같은 상대방끼리 한 묶음: CMS집금 2건 / 이자 2건 / 노무법인 돋움(띄어쓰기 달라도) 2건",
+          cms["count"] == 2 and interest["count"] == 2 and nomu["count"] == 2)
+    check("14. 추천: CMS집금·노무법인 '과세'(11의 배수, 미분류 포함), 이자 '해당없음'",
+          cms["suggested_vat_status"] == "과세" and nomu["suggested_vat_status"] == "과세"
+          and interest["suggested_vat_status"] == "해당없음")
+    loan_group = next(g for g in review["groups"] if t_loan in g["ids"])
+    card_group = next(g for g in review["groups"] if t_card in g["ids"])
+    fee_group = next(g for g in review["groups"] if t_fee in g["ids"])
+    check("15. 가수금·카드값 결제는 '해당없음', CMS사용료는 규칙대로 '과세'",
+          loan_group["suggested_vat_status"] == "해당없음" and card_group["suggested_vat_status"] == "해당없음"
+          and fee_group["reason"] == vat_service.REASON_RULE)
+    check("16. 근거 없는 것(62,500원)만 추천 없음 + 표 맨 위, 10건 중 9건 추천",
+          review["groups"][0]["ids"] == [t_labor] and review["groups"][0]["suggested_vat_status"] is None
+          and review["row_count"] == 10 and review["suggested_count"] == 9)
 
-    saved = vat_service.apply_bank_vat(
-        [{"id": t_sales, "vat_status": "과세"}, {"id": t_fee, "vat_status": "과세"}, {"id": t_labor, "vat_status": "불명"}]
-    )
+    # 화면의 '이대로 한꺼번에 저장'과 같은 동작: 묶음마다 정한 값을 그 안의 거래 전부에 저장
+    updates = [
+        {"id": i, "vat_status": g["suggested_vat_status"] or "불명"} for g in review["groups"] for i in g["ids"]
+    ]
+    saved = vat_service.apply_bank_vat(updates)
     after = transaction_service.get_transaction(t_sales)
-    check("17. 확인 후 저장: '불명'으로 둔 줄은 건너뛰고 2건만 저장",
-          saved == 2 and transaction_service.get_transaction(t_labor)["vat_status"] == "불명")
+    check("17. 한 번에 저장: '불명'으로 남긴 1건만 빼고 9건 저장",
+          saved == 9 and transaction_service.get_transaction(t_labor)["vat_status"] == "불명")
     check("18. 부가세 여부만 바뀌고 금액·회계구분은 그대로", after["amount"] == 329_725 and after["accounting_type"] == "매출")
     expect_error("19. 잘못된 부가세 값 저장 거부", lambda: vat_service.apply_bank_vat([{"id": t_sales, "vat_status": "10%"}]))
+
+    vat_service.apply_bank_vat([{"id": t_labor, "vat_status": "과세"}])  # 사용자가 직접 정함
+    t_labor2 = tx(26, "expense", "FB자동 화성동탄(노무", 31_250, "미분류")
+    later = vat_service.get_bank_review()
+    check("19-기억. 한 번 정한 거래처는 다음 거래부터 같은 값으로 추천 (11의 배수가 아니어도)",
+          later["groups"][0]["ids"] == [t_labor2] and later["groups"][0]["suggested_vat_status"] == "과세"
+          and later["groups"][0]["reason"] == vat_service.REASON_HISTORY)
 
     # ---------------- 법인카드 ----------------
     lines = [
@@ -190,30 +225,34 @@ def main() -> bool:
           {l["merchant"]: l["vat_status"] for l in saved_lines}
           == {"가짜다이소": "과세", "가짜택시": "불명", "GAKJA SOFTWARE": "불명", "가짜문구": "불명", "가짜다이소 취소": "과세"})
 
-    card_review = vat_service.get_card_review("2026-07-01", "2026-09-30")
-    card_suggested = {r["merchant"]: r["suggested_vat_status"] for r in card_review["rows"]}
-    check("22. 카드 추천: 16,500원(비용, 11의 배수)만 과세 추천",
-          card_suggested == {"가짜택시": None, "가짜문구": "과세", "GAKJA SOFTWARE": None})
-    moonggu_id = next(l["id"] for l in saved_lines if l["merchant"] == "가짜문구")
-    check("23. 카드 추천값 저장", vat_service.apply_card_vat([{"id": moonggu_id, "vat_status": "과세"}]) == 1)
+    card_review = vat_service.get_card_review()
+    card_suggested = {g["label"]: g["suggested_vat_status"] for g in card_review["groups"]}
+    check("22. 카드 추천: 국내 결제는 11의 배수가 아니어도 '과세'(택시 14,600원), 해외는 '해당없음'",
+          card_suggested == {"가짜택시": "과세", "가짜문구": "과세", "GAKJA SOFTWARE": "해당없음"})
+    card_updates = [{"id": i, "vat_status": g["suggested_vat_status"]} for g in card_review["groups"] for i in g["ids"]]
+    check("23. 카드 추천값 한 번에 저장", vat_service.apply_card_vat(card_updates) == 3)
 
     card_service.link_settlement(sid, t_card, reclassify=True)
     linked = transaction_service.get_transaction(t_card)
-    check("24. 카드값 결제 출금 연결 시 부가세 '해당없음'으로 (두 번 계산 방지)",
+    check("24. 카드값 결제 출금 연결 시 부가세 '해당없음' 유지 (두 번 계산 방지)",
           linked["vat_status"] == "해당없음" and linked["accounting_type"] == "비비용출금")
-    check("25. 연결 후에는 부가세 확인 목록에서 빠짐",
-          t_card not in {r["id"] for r in vat_service.get_bank_review("2026-07-01", "2026-09-30")["rows"]})
+    check("25. 정리 후에는 새로 들어온 1건만 남음", vat_service.get_bank_review()["row_count"] == 1)
 
     # ---------------- 예상 부가세 ----------------
+    # 매출세액: 329,725 -> 29,975 / 175,725 -> 15,975
+    # 매입세액(통장): 110 -> 10 / 70,400 -> 6,400 / 192,500 -> 17,500 / 62,500 -> 5,682
+    # 매입세액(카드): 27,500 -> 2,500 / 14,600 -> 1,327 / 16,500 -> 1,500 / -3,300 -> -300
     summary = vat_service.get_summary("2026-07-01", "2026-09-30")
-    check("26. 매출세액 = 과세 입금 부가세 29,975원", summary["sales_vat"] == 29_975)
-    check("27. 매입세액 = 통장 10원 + 카드 2,500+1,500-300 = 3,710원",
-          summary["purchase_vat_bank"] == 10 and summary["purchase_vat_card"] == 3_700 and summary["purchase_vat"] == 3_710)
-    check("28. 예상 납부세액 = 26,265원", summary["estimated_payable"] == 26_265)
-    check("29. 공급가액 기준 조정용 부가세(매출 29,975 / 비용 3,700)", summary["revenue_vat"] == 29_975 and summary["cost_vat"] == 3_700)
-    check("30. 아직 '불명'인 매출·비용 3건(노무비 + 카드 2건)은 계산에서 빠졌다고 안내", summary["unknown_count"] == 3)
+    check("26. 매출세액 = 29,975 + 15,975 = 45,950원", summary["sales_vat"] == 45_950)
+    check("27. 매입세액 = 통장 29,592원 + 카드 5,027원 = 34,619원",
+          summary["purchase_vat_bank"] == 29_592 and summary["purchase_vat_card"] == 5_027
+          and summary["purchase_vat"] == 34_619)
+    check("28. 예상 납부세액 = 11,331원", summary["estimated_payable"] == 11_331)
+    check("29. 공급가액 기준 조정용 부가세(매출 29,975 / 비용 5,682+5,027)",
+          summary["revenue_vat"] == 29_975 and summary["cost_vat"] == 10_709)
+    check("30. '불명'인 매출·비용이 없으면 빠진 건수 0", summary["unknown_count"] == 0)
     dash = dashboard_service.get_dashboard_data(date(2026, 7, 1), date(2026, 9, 30))
-    check("31. 대시보드에도 같은 예상 부가세", dash["vat_summary"]["estimated_payable"] == 26_265)
+    check("31. 대시보드에도 같은 예상 부가세", dash["vat_summary"]["estimated_payable"] == 11_331)
 
     q = vat_service.get_period_range
     check("32. 분기 빠른 선택 (이번 분기/지난 분기/연초의 지난 분기)",
@@ -226,16 +265,19 @@ def main() -> bool:
     wb = load_workbook(io.BytesIO(export_service.export_tax_excel({"start_date": "2026-08-01", "end_date": "2026-09-30"})))
     ws = wb["세무사 전달용"]
     header = [c.value for c in ws[1]]
-    rows = {r[1]: dict(zip(header, r)) for r in ws.iter_rows(min_row=2, values_only=True)}
+    rows = [dict(zip(header, r)) for r in ws.iter_rows(min_row=2, values_only=True)]
+    cms_row = next(r for r in rows if r["입금"] == 329_725)
+    interest_row = next(r for r in rows if r["거래내용"] == "이자 06.20~09.18")
     check("33. 세무사 Excel: 과세 거래는 공급가액/부가세액 채움",
-          rows["FB자금 CMS집금"]["공급가액"] == 299_750 and rows["FB자금 CMS집금"]["부가세액"] == 29_975)
-    check("34. 과세가 아닌 거래는 공급가액/부가세액 비움", rows["이자"]["공급가액"] is None and rows["이자"]["부가세액"] is None)
+          cms_row["공급가액"] == 299_750 and cms_row["부가세액"] == 29_975)
+    check("34. 과세가 아닌 거래는 공급가액/부가세액 비움",
+          interest_row["부가세 여부"] == "해당없음" and interest_row["공급가액"] is None and interest_row["부가세액"] is None)
     card_ws = wb["법인카드 사용내역"]
     card_header = [c.value for c in card_ws[1]]
     card_rows = {r[1]: dict(zip(card_header, r)) for r in card_ws.iter_rows(min_row=2, values_only=True)}
     check("35. 카드 시트에도 부가세 여부/공급가액/부가세액",
           card_rows["가짜다이소"]["부가세 여부"] == "과세" and card_rows["가짜다이소"]["공급가액"] == 25_000
-          and card_rows["가짜다이소"]["부가세액"] == 2_500 and card_rows["가짜택시"]["부가세액"] is None)
+          and card_rows["가짜다이소"]["부가세액"] == 2_500 and card_rows["GAKJA SOFTWARE"]["부가세액"] is None)
 
     # ---------------- 카드 파일 불러오기의 부가세 열 ----------------
     def xlsx(data_rows):
