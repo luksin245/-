@@ -105,10 +105,56 @@ def count_transactions() -> int:
 
 
 def delete_transaction(transaction_id: int) -> None:
+    delete_transactions([transaction_id])
+
+
+# SQLite 버전에 따라 한 문장에 넣을 수 있는 ? 개수 제한이 999개인 경우가 있어 나눠서 처리한다.
+_ID_CHUNK_SIZE = 500
+
+
+def _chunks(ids: list[int]) -> list[list[int]]:
+    return [ids[i:i + _ID_CHUNK_SIZE] for i in range(0, len(ids), _ID_CHUNK_SIZE)]
+
+
+def count_existing_transactions(transaction_ids: list[int]) -> int:
     conn = get_connection()
     try:
-        conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+        total = 0
+        for chunk in _chunks(transaction_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            total += conn.execute(
+                f"SELECT COUNT(*) FROM transactions WHERE id IN ({placeholders})", chunk
+            ).fetchone()[0]
+        return total
+    finally:
+        conn.close()
+
+
+def delete_transactions(transaction_ids: list[int]) -> int:
+    """여러 거래를 한 번의 DB 트랜잭션으로 삭제하고 실제 삭제된 건수를 반환한다.
+
+    OCR 검토 화면에서 저장된 거래는 ocr_raw_lines.linked_transaction_id가 가리키고
+    있어서(문서에 아직 검토 안 끝난 줄이 남아 있으면 그 행도 남아 있음), 먼저
+    그 연결을 끊지 않으면 외래키 제약 때문에 삭제가 실패한다.
+    중간에 오류가 나면 전부 되돌려서 일부만 지워지는 일이 없게 한다.
+    """
+    conn = get_connection()
+    try:
+        deleted = 0
+        for chunk in _chunks(transaction_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            conn.execute(
+                f"UPDATE ocr_raw_lines SET linked_transaction_id = NULL "
+                f"WHERE linked_transaction_id IN ({placeholders})",
+                chunk,
+            )
+            cursor = conn.execute(f"DELETE FROM transactions WHERE id IN ({placeholders})", chunk)
+            deleted += cursor.rowcount
         conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

@@ -6,7 +6,13 @@ UI는 이 모듈의 함수만 호출한다. DB 접근은 db.transaction_reposito
 """
 from datetime import datetime
 
-from db import account_repository, category_repository, client_repository, work_type_repository
+from db import (
+    account_repository,
+    backup_repository,
+    category_repository,
+    client_repository,
+    work_type_repository,
+)
 from db import transaction_repository as repo
 from utils.validators import ValidationError, validate_transaction_input
 
@@ -223,6 +229,24 @@ def delete_transaction(transaction_id: int) -> None:
     이 함수 내부만 soft-delete 방식으로 교체하면 되고 호출부는 변경할 필요가 없다.
     """
     repo.delete_transaction(transaction_id)
+
+
+def delete_transactions(transaction_ids: list[int]) -> dict:
+    """여러 거래를 한꺼번에 삭제한다.
+
+    실수로 많은 거래를 지우는 경우에 대비해, 실제 삭제 직전에 현재 DB 전체를
+    pre_bulk_delete_* 이름으로 반드시 먼저 백업한다 (설정 화면에서 복구 가능).
+    반환값: {"deleted": 삭제 건수, "backup_filename": 백업 파일명}
+    """
+    ids = list(dict.fromkeys(int(i) for i in transaction_ids))
+    if not ids:
+        raise ValidationError("삭제할 거래를 선택해주세요.")
+    if repo.count_existing_transactions(ids) == 0:
+        raise ValidationError("삭제할 거래를 찾을 수 없습니다. 화면을 새로고침한 뒤 다시 시도해주세요.")
+
+    backup_path = backup_repository.create_backup_file(prefix="pre_bulk_delete")
+    deleted = repo.delete_transactions(ids)
+    return {"deleted": deleted, "backup_filename": backup_path.name}
 
 
 def find_potential_duplicates(

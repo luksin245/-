@@ -37,6 +37,12 @@ if st.session_state.pop("list_edit_success", False):
     st.success("거래내역이 수정되었습니다.")
 if st.session_state.pop("list_delete_success", False):
     st.success("거래내역이 삭제되었습니다.")
+if bulk_result := st.session_state.pop("list_bulk_delete_result", None):
+    st.success(
+        f"{bulk_result['deleted']:,}건을 삭제했습니다. 삭제 직전 데이터는 "
+        f"'{bulk_result['backup_filename']}'(으)로 자동 백업되었습니다 "
+        "(잘못 지웠다면 설정 → 백업 목록 / 복구에서 되돌릴 수 있습니다)."
+    )
 
 if st.session_state.pop("reset_filters", False):
     for key in FILTER_KEYS:
@@ -412,6 +418,36 @@ def open_delete_dialog(tx: dict) -> None:
             st.rerun()
 
 
+@st.dialog("선택한 거래 삭제 확인")
+def open_bulk_delete_dialog(selected: list[dict]) -> None:
+    income_total = sum(t["amount"] for t in selected if t["transaction_type"] == "income")
+    expense_total = sum(t["amount"] for t in selected if t["transaction_type"] == "expense")
+    dates = sorted(t["transaction_date"] for t in selected)
+
+    st.warning(f"선택한 {len(selected):,}건의 거래를 삭제하시겠습니까?")
+    st.write(f"- 기간: {dates[0]} ~ {dates[-1]}")
+    st.write(f"- 수입 합계: {format_amount(income_total)}원")
+    st.write(f"- 지출 합계: {format_amount(expense_total)}원")
+    st.info(
+        "삭제 직전에 현재 데이터 전체를 자동으로 백업합니다. 잘못 지웠다면 "
+        "설정 → 백업 목록 / 복구에서 삭제 전 상태로 되돌릴 수 있습니다."
+    )
+
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button("삭제", type="primary", key="confirm_bulk_delete", use_container_width=True):
+            try:
+                result = transaction_service.delete_transactions([t["id"] for t in selected])
+                st.session_state["list_bulk_delete_result"] = result
+                st.session_state["clear_selection"] = True
+                st.rerun()
+            except ValidationError as e:
+                st.error(str(e))
+    with col_cancel:
+        if st.button("취소", key="cancel_bulk_delete", use_container_width=True):
+            st.rerun()
+
+
 if not transactions:
     st.info("조건에 해당하는 거래내역이 없습니다.")
 else:
@@ -435,14 +471,41 @@ else:
         "카테고리", "거래처", "업무유형", "회계구분", "계정과목", "부가세", "증빙", "메모",
     ]
 
-    st.dataframe(
-        df,
-        column_order=display_columns,
+    # 선택 상태는 "지금 화면에 보이는 목록"에만 유효해야 한다. 필터가 바뀌어 목록이
+    # 달라졌는데 예전 체크 상태가 엉뚱한 거래에 남아 있으면 잘못 지울 수 있으므로,
+    # 목록 구성(거래 id들)이 바뀌면 위젯 key를 바꿔 체크 상태를 초기화한다.
+    select_suffix = st.session_state["list_select_key_suffix"]
+    list_signature = hash(tuple(t["id"] for t in transactions))
+
+    st.caption("여러 건을 한꺼번에 지우려면 표 왼쪽 '선택' 칸을 체크한 뒤 아래 삭제 버튼을 누르세요.")
+    select_all = st.checkbox(
+        f"현재 검색 결과 전체 선택 ({len(transactions):,}건)",
+        key=f"list_select_all_{select_suffix}_{list_signature}",
+    )
+    table_df = df[["id"] + display_columns].copy()
+    table_df.insert(0, "선택", select_all)
+
+    edited_df = st.data_editor(
+        table_df,
+        column_order=["선택"] + display_columns,
+        column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
+        disabled=display_columns,
         hide_index=True,
         use_container_width=True,
+        key=f"list_editor_{select_suffix}_{list_signature}_{int(select_all)}",
     )
+    checked_ids = set(edited_df.loc[edited_df["선택"].astype(bool), "id"].tolist())
+    checked_transactions = [t for t in transactions if t["id"] in checked_ids]
 
-    st.caption("아래에서 수정 또는 삭제할 거래를 선택하세요.")
+    if st.button(
+        f"🗑️ 선택한 {len(checked_transactions):,}건 삭제",
+        disabled=not checked_transactions,
+        key="bulk_delete_btn",
+    ):
+        open_bulk_delete_dialog(checked_transactions)
+
+    st.divider()
+    st.caption("한 건씩 수정하거나 삭제하려면 아래에서 거래를 선택하세요.")
 
     def _format_tx_option(i: int | None) -> str:
         if i is None:
