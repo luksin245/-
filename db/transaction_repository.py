@@ -220,6 +220,52 @@ def set_vat_statuses(updates: list[dict]) -> int:
         conn.close()
 
 
+def get_transaction_types(transaction_ids: list[int]) -> set[str]:
+    """선택한 거래들의 수입/지출 구분 종류 (카테고리 일괄 변경 가능 여부 확인용)."""
+    conn = get_connection()
+    try:
+        types: set[str] = set()
+        for chunk in _chunks(transaction_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            types |= {
+                r[0] for r in conn.execute(
+                    f"SELECT DISTINCT transaction_type FROM transactions WHERE id IN ({placeholders})", chunk
+                )
+            }
+        return types
+    finally:
+        conn.close()
+
+
+# 여러 거래를 한꺼번에 바꿀 수 있는 분류 항목 (금액·날짜·거래내용 같은 원본 값은 제외)
+BULK_EDITABLE_COLUMNS = (
+    "category_id", "client_id", "work_type_id", "account_id", "accounting_type", "vat_status", "evidence_status",
+)
+
+
+def bulk_update_fields(transaction_ids: list[int], changes: dict, updated_at: str) -> int:
+    """여러 거래의 분류 항목을 한 DB 트랜잭션으로 같은 값으로 바꾼다. 바뀐 건수를 반환한다."""
+    columns = [c for c in changes if c in BULK_EDITABLE_COLUMNS]
+    if not columns:
+        return 0
+    set_sql = ", ".join(f"{c} = ?" for c in columns) + ", updated_at = ?"
+    values = [changes[c] for c in columns] + [updated_at]
+    conn = get_connection()
+    try:
+        updated = 0
+        for chunk in _chunks(transaction_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = conn.execute(f"UPDATE transactions SET {set_sql} WHERE id IN ({placeholders})", values + chunk)
+            updated += cursor.rowcount
+        conn.commit()
+        return updated
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def count_existing_transactions(transaction_ids: list[int]) -> int:
     conn = get_connection()
     try:

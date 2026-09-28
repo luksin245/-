@@ -36,8 +36,8 @@ FILTER_KEYS = [
 # 저장/수정/삭제 직후 rerun으로 다이얼로그가 닫힌 뒤에도 결과 메시지를 보여주기 위한 처리
 if st.session_state.pop("list_edit_success", False):
     st.success("거래내역이 수정되었습니다.")
-if st.session_state.pop("list_delete_success", False):
-    st.success("거래내역이 삭제되었습니다.")
+if (bulk_edited := st.session_state.pop("list_bulk_edit_result", None)) is not None:
+    st.success(f"{bulk_edited:,}건의 거래를 한꺼번에 수정했습니다.")
 if bulk_result := st.session_state.pop("list_bulk_delete_result", None):
     st.success(
         f"{bulk_result['deleted']:,}건을 삭제했습니다. 삭제 직전 데이터는 "
@@ -398,25 +398,74 @@ def open_edit_dialog(tx: dict) -> None:
             st.error(str(e))
 
 
-@st.dialog("거래 삭제 확인")
-def open_delete_dialog(tx: dict) -> None:
-    subject = tx["client_name"] or tx["description"]
-    st.warning(
-        f"{tx['transaction_date']} / {subject} / {format_amount(tx['amount'])}원 거래를 삭제하시겠습니까?"
+KEEP = "(변경 안 함)"
+CLEAR = "(비우기)"
+
+
+@st.dialog("선택한 거래 한꺼번에 수정")
+def open_bulk_edit_dialog(selected: list[dict]) -> None:
+    """여러 거래의 분류 항목만 같은 값으로 바꾼다. '(변경 안 함)'으로 둔 항목은 그대로 둔다."""
+    st.info(
+        f"체크한 {len(selected):,}건의 분류를 한꺼번에 바꿉니다. 바꿀 항목만 고르고 나머지는 "
+        f"'{KEEP}'으로 두세요. 날짜·금액·거래내용은 한 건씩 수정해야 합니다 (1건만 체크)."
     )
-    st.caption(f"거래내용: {tx['description']}")
+
+    def pick(label: str, names: list[str], key: str, clearable: bool = True, help_text: str | None = None) -> str:
+        options = [KEEP] + ([CLEAR] if clearable else []) + names
+        # 저장 후(선택 초기화 시) 다음에 열 때는 다시 '(변경 안 함)'부터 시작하도록 key에 번호를 붙인다.
+        return st.selectbox(label, options, key=f"{key}_{st.session_state['list_select_key_suffix']}", help=help_text)
+
+    types = {t["transaction_type"] for t in selected}
+    category_choice = KEEP
+    cats = income_categories if types == {"income"} else expense_categories
+    if len(types) == 1:
+        category_choice = pick(f"카테고리 ({TYPE_LABELS[next(iter(types))]})", [c["name"] for c in cats], "bulk_category")
+    else:
+        st.caption("수입과 지출이 섞여 있어 카테고리는 바꿀 수 없습니다.")
+    client_choice = pick("거래처", [c["name"] for c in all_clients], "bulk_client")
+    work_type_choice = pick("업무유형", [w["name"] for w in all_work_types], "bulk_work_type")
+    accounting_choice = pick(
+        "회계구분", transaction_service.ACCOUNTING_TYPE_OPTIONS, "bulk_accounting_type", clearable=False,
+        help_text="입금/출금(통장 방향)과는 다른 개념입니다.",
+    )
+    account_choice = pick("계정과목", [a["name"] for a in all_accounts], "bulk_account")
+    vat_choice = pick("부가세 여부", transaction_service.VAT_STATUS_OPTIONS, "bulk_vat", clearable=False)
+    evidence_choice = pick("증빙 여부", transaction_service.EVIDENCE_STATUS_OPTIONS, "bulk_evidence", clearable=False)
+
+    def to_id(choice: str, items: list[dict]):
+        return None if choice == CLEAR else next(i["id"] for i in items if i["name"] == choice)
+
+    changes: dict = {}
+    if category_choice != KEEP:
+        changes["category_id"] = to_id(category_choice, cats)
+    if client_choice != KEEP:
+        changes["client_id"] = to_id(client_choice, all_clients)
+    if work_type_choice != KEEP:
+        changes["work_type_id"] = to_id(work_type_choice, all_work_types)
+    if account_choice != KEEP:
+        changes["account_id"] = to_id(account_choice, all_accounts)
+    if accounting_choice != KEEP:
+        changes["accounting_type"] = accounting_choice
+    if vat_choice != KEEP:
+        changes["vat_status"] = vat_choice
+    if evidence_choice != KEEP:
+        changes["evidence_status"] = evidence_choice
 
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
-        if st.button("삭제", type="primary", key=f"confirm_delete_{tx['id']}", use_container_width=True):
-            transaction_service.delete_transaction(tx["id"])
-            st.session_state["list_delete_success"] = True
-            # 삭제로 목록이 한 칸씩 당겨지면서 같은 인덱스가 다른 거래를
-            # 가리킬 수 있으므로 선택 상태를 비운다.
-            st.session_state["clear_selection"] = True
-            st.rerun()
+        if st.button(
+            f"{len(selected):,}건 저장", type="primary", disabled=not changes, key="confirm_bulk_edit",
+            use_container_width=True,
+        ):
+            try:
+                updated = transaction_service.bulk_update_transactions([t["id"] for t in selected], changes)
+                st.session_state["list_bulk_edit_result"] = updated
+                st.session_state["clear_selection"] = True
+                st.rerun()
+            except ValidationError as e:
+                st.error(str(e))
     with col_cancel:
-        if st.button("취소", key=f"cancel_delete_{tx['id']}", use_container_width=True):
+        if st.button("취소", key="cancel_bulk_edit", use_container_width=True):
             st.rerun()
 
 
@@ -482,7 +531,10 @@ else:
     select_suffix = st.session_state["list_select_key_suffix"]
     list_signature = hash(tuple(t["id"] for t in transactions))
 
-    st.caption("여러 건을 한꺼번에 지우려면 표 왼쪽 '선택' 칸을 체크한 뒤 아래 삭제 버튼을 누르세요.")
+    st.caption(
+        "표 왼쪽 '선택' 칸을 체크한 뒤 아래 버튼을 누르세요. 1건을 체크하면 모든 항목을 수정할 수 있고, "
+        "여러 건을 체크하면 회계구분·계정과목·부가세 같은 분류를 한꺼번에 바꿀 수 있습니다."
+    )
     select_all = st.checkbox(
         f"현재 검색 결과 전체 선택 ({len(transactions):,}건)",
         key=f"list_select_all_{select_suffix}_{list_signature}",
@@ -502,39 +554,22 @@ else:
     checked_ids = set(edited_df.loc[edited_df["선택"].astype(bool), "id"].tolist())
     checked_transactions = [t for t in transactions if t["id"] in checked_ids]
 
-    if st.button(
-        f"🗑️ 선택한 {len(checked_transactions):,}건 삭제",
-        disabled=not checked_transactions,
-        key="bulk_delete_btn",
-    ):
-        open_bulk_delete_dialog(checked_transactions)
-
-    st.divider()
-    st.caption("한 건씩 수정하거나 삭제하려면 아래에서 거래를 선택하세요.")
-
-    def _format_tx_option(i: int | None) -> str:
-        if i is None:
-            return "(선택 안함)"
-        tx = transactions[i]
-        return (
-            f"{tx['transaction_date']} · {tx['description']} · "
-            f"{TYPE_LABELS[tx['transaction_type']]} {format_amount(tx['amount'])}원"
-        )
-
-    selected_idx = st.selectbox(
-        "수정 또는 삭제할 거래 선택",
-        options=list(range(len(transactions))),
-        format_func=_format_tx_option,
-        index=None,
-        placeholder="(선택 안함)",
-        key=f"list_selected_idx_{st.session_state['list_select_key_suffix']}",
-    )
-    selected_tx = transactions[selected_idx] if selected_idx is not None else None
-
     col_edit, col_delete = st.columns(2)
     with col_edit:
-        if st.button("✏️ 선택한 거래 수정", disabled=selected_tx is None, use_container_width=True):
-            open_edit_dialog(selected_tx)
+        edit_label = (
+            "✏️ 선택한 거래 수정" if len(checked_transactions) <= 1
+            else f"✏️ 선택한 {len(checked_transactions):,}건 한꺼번에 수정"
+        )
+        if st.button(edit_label, disabled=not checked_transactions, key="edit_checked_btn", use_container_width=True):
+            if len(checked_transactions) == 1:
+                open_edit_dialog(checked_transactions[0])
+            else:
+                open_bulk_edit_dialog(checked_transactions)
     with col_delete:
-        if st.button("🗑️ 선택한 거래 삭제", disabled=selected_tx is None, use_container_width=True):
-            open_delete_dialog(selected_tx)
+        if st.button(
+            f"🗑️ 선택한 {len(checked_transactions):,}건 삭제",
+            disabled=not checked_transactions,
+            key="bulk_delete_btn",
+            use_container_width=True,
+        ):
+            open_bulk_delete_dialog(checked_transactions)

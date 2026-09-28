@@ -760,18 +760,26 @@ else:  # 자동분류 규칙
             except ValidationError as e:
                 st.error(str(e))
 
-    @st.dialog("자동분류 규칙 비활성화")
-    def open_deactivate_rule_dialog(rule: dict) -> None:
-        st.warning(f"'{rule['keyword']}' 규칙을 비활성화하시겠습니까?\n\n비활성화하면 더 이상 추천에 사용되지 않습니다.")
+    @st.dialog("자동분류 규칙 삭제")
+    def open_delete_rules_dialog(rules: list[dict]) -> None:
+        keywords = ", ".join(f"'{r['keyword']}'" for r in rules[:10]) + (" 외" if len(rules) > 10 else "")
+        st.warning(f"규칙 {len(rules)}개({keywords})를 삭제하시겠습니까?")
+        st.caption(
+            "이미 저장된 거래내역은 바뀌지 않고, 앞으로 추천에만 쓰이지 않게 됩니다. "
+            "삭제한 규칙은 되돌릴 수 없으니, 잠시 끄기만 하려면 '비활성화'를 쓰세요."
+        )
         col_confirm, col_cancel = st.columns(2)
         with col_confirm:
-            if st.button("비활성화", type="primary", key=f"confirm_deactivate_rule_{rule['id']}", use_container_width=True):
-                category_rule_service.deactivate_rule(rule["id"])
-                st.session_state["rule_msg"] = f"'{rule['keyword']}' 규칙을 비활성화했습니다."
-                st.session_state["rule_clear_selection"] = True
-                st.rerun()
+            if st.button("삭제", type="primary", key="confirm_delete_rules", use_container_width=True):
+                try:
+                    deleted = category_rule_service.delete_rules([r["id"] for r in rules])
+                    st.session_state["rule_msg"] = f"규칙 {deleted}개를 삭제했습니다."
+                    st.session_state["rule_clear_selection"] = True
+                    st.rerun()
+                except ValidationError as e:
+                    st.error(str(e))
         with col_cancel:
-            if st.button("취소", key=f"cancel_deactivate_rule_{rule['id']}", use_container_width=True):
+            if st.button("취소", key="cancel_delete_rules", use_container_width=True):
                 st.rerun()
 
     if st.button("+ 새 규칙 추가", key="open_add_rule"):
@@ -803,37 +811,58 @@ else:  # 자동분류 규칙
                     "상태": "활성" if r["is_active"] else "비활성",
                 }
             )
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-        st.caption("아래에서 수정 또는 상태를 변경할 규칙을 선택하세요.")
-
-        def _fmt_rule_option(i: int | None) -> str:
-            if i is None:
-                return "(선택 안함)"
-            r = rules_admin[i]
-            return f"{r['keyword']} ({'활성' if r['is_active'] else '비활성'})"
-
-        rule_selected_idx = st.selectbox(
-            "수정 또는 상태변경할 규칙 선택",
-            options=list(range(len(rules_admin))),
-            format_func=_fmt_rule_option,
-            index=None,
-            placeholder="(선택 안함)",
-            key=f"rule_selected_idx_{st.session_state['rule_select_suffix']}",
+        st.caption("표 왼쪽 '선택' 칸을 체크한 뒤 아래 버튼으로 바로 수정·삭제할 수 있습니다 (수정은 1개만 체크).")
+        rule_table = pd.DataFrame(rows)
+        rule_table.insert(0, "선택", False)
+        # 목록 구성이 바뀌면(필터 변경·삭제 등) 체크 상태가 엉뚱한 규칙에 남지 않도록 key를 바꾼다.
+        rule_signature = hash(tuple(r["id"] for r in rules_admin))
+        edited_rules = st.data_editor(
+            rule_table,
+            column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
+            disabled=[c for c in rule_table.columns if c != "선택"],
+            hide_index=True,
+            use_container_width=True,
+            key=f"rule_table_{st.session_state['rule_select_suffix']}_{rule_signature}",
         )
-        selected_rule = rules_admin[rule_selected_idx] if rule_selected_idx is not None else None
+        checked_rules = [r for r, on in zip(rules_admin, edited_rules["선택"].tolist()) if on]
 
-        col_edit, col_toggle = st.columns(2)
+        col_edit, col_delete, col_toggle = st.columns(3)
         with col_edit:
-            if st.button("✏️ 수정", disabled=selected_rule is None, key="rule_edit_btn", use_container_width=True):
-                open_edit_rule_dialog(selected_rule)
+            if st.button(
+                "✏️ 수정" if len(checked_rules) <= 1 else "✏️ 수정 (1개만 체크하세요)",
+                disabled=len(checked_rules) != 1,
+                key="rule_edit_btn",
+                use_container_width=True,
+            ):
+                open_edit_rule_dialog(checked_rules[0])
+        with col_delete:
+            if st.button(
+                f"🗑️ 선택한 {len(checked_rules)}개 삭제",
+                disabled=not checked_rules,
+                key="rule_delete_btn",
+                use_container_width=True,
+            ):
+                open_delete_rules_dialog(checked_rules)
         with col_toggle:
-            if selected_rule is not None and not selected_rule["is_active"]:
-                if st.button("♻️ 재활성화", key="rule_activate_btn", use_container_width=True):
-                    category_rule_service.activate_rule(selected_rule["id"])
-                    st.session_state["rule_msg"] = f"'{selected_rule['keyword']}' 규칙을 재활성화했습니다."
+            if checked_rules and all(not r["is_active"] for r in checked_rules):
+                if st.button(f"♻️ 선택한 {len(checked_rules)}개 재활성화", key="rule_activate_btn", use_container_width=True):
+                    for r in checked_rules:
+                        category_rule_service.activate_rule(r["id"])
+                    st.session_state["rule_msg"] = f"{len(checked_rules)}개 규칙을 재활성화했습니다."
                     st.session_state["rule_clear_selection"] = True
                     st.rerun()
             else:
-                if st.button("🚫 비활성화", disabled=selected_rule is None, key="rule_deactivate_btn", use_container_width=True):
-                    open_deactivate_rule_dialog(selected_rule)
+                active_checked = [r for r in checked_rules if r["is_active"]]
+                if st.button(
+                    f"🚫 선택한 {len(active_checked)}개 비활성화",
+                    disabled=not active_checked,
+                    key="rule_deactivate_btn",
+                    use_container_width=True,
+                ):
+                    for r in active_checked:
+                        category_rule_service.deactivate_rule(r["id"])
+                    st.session_state["rule_msg"] = (
+                        f"{len(active_checked)}개 규칙을 비활성화했습니다 (더 이상 추천에 쓰이지 않음, 재활성화 가능)."
+                    )
+                    st.session_state["rule_clear_selection"] = True
+                    st.rerun()

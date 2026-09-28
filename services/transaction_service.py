@@ -197,6 +197,42 @@ def update_transaction(
     repo.update_transaction(transaction_id, data)
 
 
+def bulk_update_transactions(transaction_ids: list[int], changes: dict) -> int:
+    """체크한 여러 거래의 분류 항목(카테고리/거래처/업무유형/계정과목/회계구분/부가세/증빙)을 한꺼번에 바꾼다.
+
+    changes에 들어 있는 항목만 바꾸며(None이면 그 항목을 비움), 금액·날짜·거래내용은 바꾸지 않는다.
+    한 건씩 수정할 때와 같은 검증을 거친다. 바뀐 건수를 반환한다.
+    """
+    ids = list(dict.fromkeys(int(i) for i in transaction_ids))
+    if not ids:
+        raise ValidationError("수정할 거래를 선택해주세요.")
+    changes = {k: v for k, v in changes.items() if k in repo.BULK_EDITABLE_COLUMNS}
+    if not changes:
+        raise ValidationError("바꿀 항목을 하나 이상 골라주세요.")
+    if repo.count_existing_transactions(ids) != len(ids):
+        raise ValidationError("선택한 거래 중 찾을 수 없는 거래가 있습니다. 화면을 새로고침한 뒤 다시 시도해주세요.")
+
+    if "accounting_type" in changes:
+        _validate_accounting_type(changes["accounting_type"])
+    if "vat_status" in changes and changes["vat_status"] not in VAT_STATUS_OPTIONS:
+        raise ValidationError("부가세 여부 값이 올바르지 않습니다.")
+    if "evidence_status" in changes and changes["evidence_status"] not in EVIDENCE_STATUS_OPTIONS:
+        raise ValidationError("증빙 여부 값이 올바르지 않습니다.")
+    if "client_id" in changes:
+        _validate_client_reference(changes["client_id"], unchanged=False)
+    if "work_type_id" in changes:
+        _validate_work_type_reference(changes["work_type_id"], unchanged=False)
+    if "account_id" in changes:
+        _validate_account_reference(changes["account_id"], unchanged=False)
+    if changes.get("category_id") is not None:
+        types = repo.get_transaction_types(ids)
+        if len(types) != 1:
+            raise ValidationError("수입과 지출이 섞여 있어 카테고리를 한꺼번에 바꿀 수 없습니다. 한쪽만 체크해주세요.")
+        _validate_category_matches_type(changes["category_id"], types.pop(), unchanged=False)
+
+    return repo.bulk_update_fields(ids, changes, datetime.now().isoformat(timespec="seconds"))
+
+
 def list_transactions(filters: dict | None = None, limit: int | None = None) -> list[dict]:
     """카테고리/거래처/업무유형/계정과목 이름까지 포함해 조회한다. filters는 DB 쿼리 조건으로 처리된다."""
     return repo.get_transactions(filters, limit=limit)

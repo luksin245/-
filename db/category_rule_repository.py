@@ -126,6 +126,21 @@ def set_rule_active(rule_id: int, is_active: bool) -> None:
         conn.close()
 
 
+def delete_rules(rule_ids: list[int]) -> int:
+    """규칙을 실제로 삭제한다. 규칙은 거래가 참조하지 않으므로(추천에만 쓰임) 지워도 기존 거래에 영향이 없다."""
+    conn = get_connection()
+    try:
+        placeholders = ",".join("?" for _ in rule_ids)
+        cursor = conn.execute(f"DELETE FROM category_rules WHERE id IN ({placeholders})", rule_ids)
+        conn.commit()
+        return cursor.rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def increment_hit_count(rule_id: int) -> None:
     conn = get_connection()
     try:

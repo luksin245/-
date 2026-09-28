@@ -113,6 +113,18 @@ def activate_rule(rule_id: int) -> None:
     repo.set_rule_active(rule_id, True)
 
 
+def delete_rules(rule_ids: list[int]) -> int:
+    """선택한 규칙들을 삭제한다 (거래·기준정보는 건드리지 않음). 삭제한 개수를 반환한다.
+
+    거래처·카테고리 같은 기준정보는 거래가 참조하므로 비활성화만 가능하지만, 자동분류 규칙은
+    추천에만 쓰이고 어떤 거래도 참조하지 않아서 실제로 지워도 안전하다.
+    """
+    ids = list(dict.fromkeys(int(i) for i in rule_ids))
+    if not ids:
+        raise ValidationError("삭제할 규칙을 선택해주세요.")
+    return repo.delete_rules(ids)
+
+
 def _fold(text: str | None) -> str:
     return unicodedata.normalize("NFKC", text or "").lower()
 
