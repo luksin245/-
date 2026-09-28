@@ -36,7 +36,7 @@ from services import (  # noqa: E402
     transaction_service,
     work_type_service,
 )
-from services.ocr.base import STATUS_OK, STATUS_SUSPECTED_DUPLICATE  # noqa: E402
+from services.ocr.base import STATUS_NEEDS_REVIEW, STATUS_OK, STATUS_SUSPECTED_DUPLICATE  # noqa: E402
 from utils.validators import ValidationError  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -202,6 +202,24 @@ def main() -> bool:
 
     documents = import_service.list_documents()
     check("22. 업로드한 문서가 목록에 파일명과 함께 조회됨", any(d["id"] == doc_id and d["file_name"] == "fake_bank_statement.png" for d in documents))
+
+    # 인터넷뱅킹에서 내려받는 "계좌별거래내역" 표 형식(입금액/출금액/잔액 컬럼이 있는
+    # 표) PDF는 문장형 줄 단위 파서로는 인식할 수 없어 전용 표 파서를 사용한다.
+    with open(FIXTURES_DIR / "fake_bank_table_statement.pdf", "rb") as f:
+        table_pdf_bytes = f.read()
+    table_doc_id = import_service.process_uploaded_file(table_pdf_bytes, "fake_bank_table_statement.pdf")
+    table_lines = import_service.get_review_lines(table_doc_id)
+    check("22-표형식. 표 형식 PDF에서 모든 행이 인식됨", len(table_lines) == 6)
+    ok_table_lines = [l for l in table_lines if l["status"] == STATUS_OK]
+    check("22-표형식. 정상 인식된 행은 입금/출금 중 정확히 하나만 있음",
+          all((l["raw_income"] is not None) != (l["raw_expense"] is not None) for l in ok_table_lines))
+    check("22-표형식. 입금/출금이 모두 없는 행(신규 등)은 확인필요로 처리됨",
+          any(l["status"] == STATUS_NEEDS_REVIEW and l["raw_income"] is None and l["raw_expense"] is None for l in table_lines))
+    first_row = next(l for l in table_lines if l["line_no"] == 1)
+    check("22-표형식. 날짜/시간(줄바꿈 포함)이 정확히 복원됨", first_row["raw_date"] == "2026-09-01" and first_row["raw_time"] == "09:12:00")
+    check("22-표형식. 입금액이 정확히 인식됨", first_row["raw_income"] == 1_500_000)
+    check("22-표형식. 잔액이 정확히 인식됨", first_row["raw_balance"] == 5_000_000)
+    import_service.discard_document(table_doc_id)
 
     # =================================================================
     # D. OCR 검토 / 확정 / 취소

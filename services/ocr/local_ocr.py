@@ -160,6 +160,8 @@ class LocalOCREngine(OCREngine):
         import pymupdf as fitz  # PyMuPDF
         from PIL import Image
 
+        from services.ocr import bank_table_pdf
+
         candidates: list[dict] = []
         doc = fitz.open(file_path)
         try:
@@ -167,6 +169,13 @@ class LocalOCREngine(OCREngine):
                 # 텍스트 기반 PDF면 먼저 텍스트를 그대로 시도한다 (OCR보다 정확함).
                 text = page.get_text().strip()
                 if text:
+                    # 인터넷뱅킹에서 내려받는 "계좌별거래내역" 표 형식(입금액/출금액/잔액
+                    # 컬럼이 있는 표)은 한 줄에 "입금"/"출금" 글자가 없어 아래의 문장형
+                    # 줄 단위 파서로는 인식할 수 없으므로, 표 형식이면 전용 파서를 먼저 쓴다.
+                    if bank_table_pdf.looks_like_transaction_table(text):
+                        candidates.extend(bank_table_pdf.extract_candidates(page))
+                        continue
+
                     for line in text.splitlines():
                         candidate = _parse_line(line, confidence=100.0)
                         if candidate is not None:
