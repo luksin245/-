@@ -53,8 +53,9 @@ def cli(argv: list[str]) -> int:
         Path(a.dump).write_text(p.to_json(), encoding="utf-8")
     print(f"길이 {p.duration:.1f}초 · 컷 {len(p.segments)}개 · 자막 {len(p.captions)}줄 · 제목: {p.title}")
     print(f"얼굴 위치: {p.face_box} · 피부 보정: {p.retouch} · 얼굴형: {p.slim}")
+    print(f"목록: {p.list_style} {p.list_count}개")
     for it in p.items:
-        print(f"  {it.rank}위 @{it.time}: {it.text}")
+        print(f"  {it.rank}. @{it.time}: {it.text}")
     if not a.no_render:
         out = a.output or str(Path(a.video).with_name(Path(a.video).stem + "_릴스.mp4"))
         render(p, out, lambda f: progress("영상 만드는 중", f))

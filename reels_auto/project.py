@@ -34,8 +34,9 @@ class Project:
     words: list[Word] = field(default_factory=list)
     captions: list[Caption] = field(default_factory=list)
     title: str = ""
-    top_mode: bool = False
-    items: list[RankItem] = field(default_factory=list)  # 5위부터 1위 순서
+    list_style: str = "none"  # "rank"(TOP N, 아래부터 채움) / "ordinal"(N가지, 위부터 채움) / "none"
+    list_count: int = 0  # 목록 줄 수 (2~7)
+    items: list[RankItem] = field(default_factory=list)  # rank = 목록의 몇 번째 줄인지 (1이 맨 위)
     bgm: str | None = None
     bgm_volume: float = 0.18
     face_box: list[int] | None = None  # 출력 화면 기준 얼굴 상자 [x, y, w, h]
@@ -52,4 +53,6 @@ class Project:
         d["words"] = [Word(**w) for w in d["words"]]
         d["captions"] = [Caption(**c) for c in d["captions"]]
         d["items"] = [RankItem(**i) for i in d["items"]]
+        if "top_mode" in d:  # 예전 형식
+            d["list_style"], d["list_count"] = ("rank", 5) if d.pop("top_mode") else ("none", 0)
         return cls(**d)

@@ -1,4 +1,4 @@
-"""레퍼런스 스타일(제목 / TOP 5 패널 / 자막)을 ASS 자막 파일로 만든다.
+"""레퍼런스 스타일(제목 / 목록 패널 / 자막)을 ASS 자막 파일로 만든다.
 
 화면 크기 1080x1920 기준 좌표. 레퍼런스 영상에서 잰 위치를 그대로 옮겼다.
 """
@@ -13,12 +13,21 @@ SUB_FONT = "Pretendard Medium"
 LIST_FONT = "Pretendard SemiBold"
 
 TITLE_TOP_Y = 248
-PANEL = (80, 906, 1000, 1456)  # x0, y0, x1, y1
+# 목록 패널: 아래쪽 끝(자막 바로 위)을 고정하고 줄 수에 따라 위로 늘어난다. 5줄일 때 레퍼런스와 같다.
+PANEL_X0, PANEL_X1, PANEL_BOTTOM = 80, 1000, 1456
+PANEL_PAD_TOP, PANEL_PAD_BOTTOM = 78, 56  # 첫 줄/마지막 줄 중심에서 패널 끝까지
 PANEL_RADIUS = 28
-ROW_Y = [984 + i * 104 for i in range(5)]  # 1위~5위 줄의 세로 중심
+
+
+def panel_layout(count: int) -> tuple[tuple[int, int, int, int], list[int]]:
+    """(패널 x0, y0, x1, y1), 각 줄의 세로 중심 목록 (1번이 맨 위)."""
+    step = 104 if count <= 5 else int(104 * 4 / (count - 1))  # 6줄 이상이면 간격을 좁혀 얼굴을 가리지 않게
+    y0 = PANEL_BOTTOM - PANEL_PAD_BOTTOM - (count - 1) * step - PANEL_PAD_TOP
+    rows = [y0 + PANEL_PAD_TOP + i * step for i in range(count)]
+    return (PANEL_X0, y0, PANEL_X1, PANEL_BOTTOM), rows
+
 NUM_X, ITEM_X = 110, 178
-CAPTION_Y_TOP = 1500
-CAPTION_Y_PLAIN = 1500
+CAPTION_Y = 1500
 
 HEADER = f"""[Script Info]
 ScriptType: v4.00+
@@ -79,21 +88,22 @@ def line(layer: int, start: float, end: float, style: str, text: str) -> str:
 def build_ass(p: Project) -> str:
     out = [HEADER]
     end = p.duration
-    use_top = p.top_mode and bool(p.items)
+    count = min(max(p.list_count, 0), 7)
+    show_list = p.list_style != "none" and count >= 2
 
     if p.title.strip():
         out.append(line(3, 0, end, "Title", f"{{\\an8\\pos({W // 2},{TITLE_TOP_Y})}}" + esc(wrap_title(p.title))))
 
-    if use_top:
-        x0, y0, x1, y1 = PANEL
+    if show_list:
+        (x0, y0, x1, y1), rows = panel_layout(count)
         out.append(line(0, 0, end, "Panel", f"{{\\an7\\pos({x0},{y0})\\p1}}" + rounded_rect(x1 - x0, y1 - y0, PANEL_RADIUS)))
-        for i, y in enumerate(ROW_Y):
+        for i, y in enumerate(rows):
             out.append(line(1, 0, end, "Num", f"{{\\pos({NUM_X},{y})}}{i + 1}."))
         for it in p.items:
             text = it.text.strip()
-            if it.time is None or not text:
+            if it.time is None or not text or not 1 <= it.rank <= count:
                 continue
-            y = ROW_Y[it.rank - 1]
+            y = rows[it.rank - 1]
             size = 30 if len(text) <= 22 else max(20, int(30 * 22 / len(text)))
             tag = f"{{\\pos({ITEM_X},{y})\\fs{size}}}"
             # 타이핑 효과: 글자가 하나씩 나타남
@@ -106,7 +116,7 @@ def build_ass(p: Project) -> str:
                 out.append(line(1, t, min(t_next, end), "Item", tag + esc(text[:k])))
                 t = t_next
 
-    y = CAPTION_Y_TOP if use_top else CAPTION_Y_PLAIN
+    y = CAPTION_Y
     for c in p.captions:
         if c.text.strip() and c.end > c.start:
             out.append(line(2, c.start, min(c.end, end), "Caption", f"{{\\an5\\pos({W // 2},{y})}}" + esc(c.text)))

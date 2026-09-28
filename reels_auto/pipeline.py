@@ -36,8 +36,7 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
     from .face import detect_face_box
 
     face_box = detect_face_box(source, segments)
-    items = analyze.detect_ranks(words)
-    top_mode = bool(items)
+    style, count, items = analyze.detect_list(words)
     report("완료", 1.0)
     return Project(
         source=source,
@@ -45,8 +44,9 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         duration=duration,
         words=words,
         captions=analyze.make_captions(words, duration),
-        title=analyze.suggest_title(words, top_mode),
-        top_mode=top_mode,
+        title=analyze.suggest_title(words, style, count),
+        list_style=style,
+        list_count=count,
         items=items,
         bgm=default_bgm(),
         face_box=face_box,

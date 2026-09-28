@@ -12,11 +12,13 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
 from .analyze import retime_captions
+from .analyze import MAX_ITEMS
 from .face import DEFAULT_LEVEL, DEFAULT_SLIM, LEVELS, SLIM_LEVELS
 from .paths import bgm_dir
 from .project import Project
 
 NO_BGM = "(BGM 없음)"
+STYLE_LABELS = {"none": "표시 안 함", "rank": "순위형 (TOP N · 아래부터)", "ordinal": "나열형 (N가지 · 위부터)"}
 PICK_BGM = "직접 고르기..."
 
 
@@ -62,26 +64,36 @@ class App:
         self.title_text = tk.Text(left, height=2, width=44, font=("Malgun Gothic", 12))
         self.title_text.pack(anchor="w", pady=(0, 8))
 
-        self.top_var = tk.BooleanVar(value=False)
-        self.top_check = ttk.Checkbutton(left, text="TOP 5 목록 표시", variable=self.top_var)
-        self.top_check.pack(anchor="w")
-        grid = ttk.Frame(left)
-        grid.pack(anchor="w", pady=(2, 8))
-        ttk.Label(grid, text="순위").grid(row=0, column=0)
-        ttk.Label(grid, text="목록에 들어갈 글자").grid(row=0, column=1)
-        ttk.Label(grid, text="나타나는 시점(초)").grid(row=0, column=2)
+        fmt = ttk.Frame(left)
+        fmt.pack(anchor="w")
+        ttk.Label(fmt, text="목록").pack(side="left")
+        self.style_var = tk.StringVar(value=STYLE_LABELS["none"])
+        self.style_box = ttk.Combobox(fmt, textvariable=self.style_var, values=list(STYLE_LABELS.values()),
+                                      state="readonly", width=22)
+        self.style_box.pack(side="left", padx=6)
+        self.style_box.bind("<<ComboboxSelected>>", lambda _e: self._layout_items())
+        ttk.Label(fmt, text="개수").pack(side="left")
+        self.count_var = tk.IntVar(value=5)
+        self.count_spin = ttk.Spinbox(fmt, from_=2, to=MAX_ITEMS, textvariable=self.count_var, width=4,
+                                      command=self._layout_items, state="readonly")
+        self.count_spin.pack(side="left", padx=6)
+        self.item_grid = ttk.Frame(left)
+        self.item_grid.pack(anchor="w", pady=(2, 8))
+        self.item_head = [ttk.Label(self.item_grid, text="순서"), ttk.Label(self.item_grid, text="목록에 들어갈 글자"),
+                          ttk.Label(self.item_grid, text="나타나는 시점(초)")]
         self.item_text: dict[int, tk.StringVar] = {}
         self.item_time: dict[int, tk.StringVar] = {}
-        self.item_widgets: list[tk.Widget] = []
-        for row, rank in enumerate((5, 4, 3, 2, 1), start=1):
-            ttk.Label(grid, text=f"{rank}위").grid(row=row, column=0, padx=4)
-            self.item_text[rank] = tk.StringVar()
-            self.item_time[rank] = tk.StringVar()
-            e1 = ttk.Entry(grid, textvariable=self.item_text[rank], width=28)
-            e2 = ttk.Entry(grid, textvariable=self.item_time[rank], width=8)
-            e1.grid(row=row, column=1, padx=4, pady=2)
-            e2.grid(row=row, column=2, padx=4, pady=2)
-            self.item_widgets += [e1, e2]
+        self.item_rows: dict[int, tuple[ttk.Label, ttk.Entry, ttk.Entry]] = {}
+        self.item_widgets: list[tk.Widget] = [self.style_box, self.count_spin]
+        for slot in range(1, MAX_ITEMS + 1):
+            self.item_text[slot] = tk.StringVar()
+            self.item_time[slot] = tk.StringVar()
+            row = (ttk.Label(self.item_grid, text=""),
+                   ttk.Entry(self.item_grid, textvariable=self.item_text[slot], width=28),
+                   ttk.Entry(self.item_grid, textvariable=self.item_time[slot], width=8))
+            self.item_rows[slot] = row
+            self.item_widgets += [row[1], row[2]]
+        self._layout_items()
 
         ttk.Label(left, text="배경음악").pack(anchor="w", pady=(6, 0))
         self.bgm_var = tk.StringVar(value=NO_BGM)
@@ -142,8 +154,28 @@ class App:
 
     def _set_enabled(self, on: bool) -> None:
         state = "normal" if on else "disabled"
-        for w in [self.title_text, self.sub_text, self.top_check, self.render_btn, *self.item_widgets]:
+        for w in [self.title_text, self.sub_text, self.render_btn, *self.item_widgets]:
             w.configure(state=state)
+
+    def _style(self) -> str:
+        return next((k for k, v in STYLE_LABELS.items() if v == self.style_var.get()), "none")
+
+    def _layout_items(self) -> None:
+        """목록 형식과 개수에 맞춰 입력 줄을 보여준다. 순위형은 말하는 순서(N위 → 1위)대로 나열."""
+        style, count = self._style(), int(self.count_var.get())
+        for w in (*self.item_head, *[x for r in self.item_rows.values() for x in r]):
+            w.grid_remove()
+        if style == "none":
+            return
+        for col, w in enumerate(self.item_head):
+            w.grid(row=0, column=col)
+        order = range(count, 0, -1) if style == "rank" else range(1, count + 1)
+        for row, slot in enumerate(order, start=1):
+            label, e1, e2 = self.item_rows[slot]
+            label.configure(text=f"{slot}위" if style == "rank" else f"{slot}번째")
+            label.grid(row=row, column=0, padx=4)
+            e1.grid(row=row, column=1, padx=4, pady=2)
+            e2.grid(row=row, column=2, padx=4, pady=2)
 
     # ---------- 동작 ----------
     def pick_video(self) -> None:
@@ -169,12 +201,14 @@ class App:
         self._set_enabled(True)
         self.title_text.delete("1.0", "end")
         self.title_text.insert("1.0", p.title)
-        self.top_var.set(p.top_mode)
-        by_rank = {it.rank: it for it in p.items}
-        for rank in (5, 4, 3, 2, 1):
-            it = by_rank.get(rank)
-            self.item_text[rank].set(it.text if it else "")
-            self.item_time[rank].set(f"{it.time:.2f}" if it and it.time is not None else "")
+        self.style_var.set(STYLE_LABELS.get(p.list_style, STYLE_LABELS["none"]))
+        self.count_var.set(p.list_count if p.list_count >= 2 else 5)
+        by_slot = {it.rank: it for it in p.items}
+        for slot in range(1, MAX_ITEMS + 1):
+            it = by_slot.get(slot)
+            self.item_text[slot].set(it.text if it else "")
+            self.item_time[slot].set(f"{it.time:.2f}" if it and it.time is not None else "")
+        self._layout_items()
         self.sub_text.delete("1.0", "end")
         self.sub_text.insert("1.0", "\n".join(c.text for c in p.captions))
         name = Path(p.bgm).stem if p.bgm else NO_BGM
@@ -193,15 +227,16 @@ class App:
         assert self.project is not None
         p = self.project
         p.title = self.title_text.get("1.0", "end").strip()
-        p.top_mode = self.top_var.get()
+        p.list_style = self._style()
+        p.list_count = int(self.count_var.get()) if p.list_style != "none" else 0
         items = []
-        for rank in (5, 4, 3, 2, 1):
-            raw = self.item_time[rank].get().strip()
+        for slot in range(1, p.list_count + 1):
+            raw = self.item_time[slot].get().strip()
             try:
                 t = float(raw) if raw else None
             except ValueError:
-                raise ValueError(f"{rank}위 시점은 숫자로 적어주세요 (예: 12.5)")
-            items.append(RankItem(rank, t, self.item_text[rank].get().strip()))
+                raise ValueError(f"목록 {slot}번 줄의 시점은 숫자로 적어주세요 (예: 12.5)")
+            items.append(RankItem(slot, t, self.item_text[slot].get().strip()))
         p.items = items
         lines = self.sub_text.get("1.0", "end").split("\n")
         p.captions = retime_captions(lines, p.captions, p.duration)

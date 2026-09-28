@@ -1,4 +1,4 @@
-"""음성 인식 결과로 자막, TOP 5 항목, 제목을 자동으로 만든다."""
+"""음성 인식 결과로 자막, 목록(TOP N / N가지) 항목, 제목을 자동으로 만든다."""
 from __future__ import annotations
 
 import re
@@ -6,9 +6,17 @@ import re
 from .project import Caption, RankItem, Word
 
 SENTENCE_END = re.compile(r"[.?!]$")
-KOREAN_NUM = {"일": 1, "이": 2, "삼": 3, "사": 4, "오": 5}
-RANK_DIGIT = re.compile(r"(?<![0-9])([1-5])\s*위")
-RANK_KOREAN = re.compile(r"^(일|이|삼|사|오)위")
+MAX_ITEMS = 7
+KOREAN_NUM = {"일": 1, "이": 2, "삼": 3, "사": 4, "오": 5, "육": 6, "칠": 7}
+NATIVE_NUM = {"한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7}
+RANK_DIGIT = re.compile(r"(?<![0-9])([1-7])\s*위")
+RANK_KOREAN = re.compile(r"^(일|이|삼|사|오|육|칠)위")
+# "첫 번째", "두번째", "셋째", "2번째" …
+ORDINAL = re.compile(r"^(?:(첫|두|세|네|다섯|여섯|일곱)\s*번\s*째|(첫|둘|셋|넷|다섯|여섯|일곱)째|([1-7])\s*번\s*째)")
+ORDINAL_NUM = {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4, "다섯": 5, "여섯": 6, "일곱": 7}
+# 첫 문장에서 개수 찾기: "TOP 3", "탑 5", "3가지", "세 가지"
+COUNT_TOP = re.compile(r"(?:TOP|탑)\s*([2-7])", re.I)
+COUNT_KINDS = re.compile(r"(?:([2-7])|(두|세|네|다섯|여섯|일곱))\s*가지")
 
 
 def _clean(text: str) -> str:
@@ -68,8 +76,21 @@ def _rank_of(words: list[Word], i: int) -> int | None:
     if m:
         return KOREAN_NUM[m.group(1)]
     # "5" "위는" 처럼 나뉘어 인식된 경우
-    if i + 1 < len(words) and re.fullmatch(r"[1-5]", text) and words[i + 1].text.strip().startswith("위"):
+    if i + 1 < len(words) and re.fullmatch(r"[1-7]", text) and words[i + 1].text.strip().startswith("위"):
         return int(text)
+    return None
+
+
+def _ordinal_of(words: list[Word], i: int) -> tuple[int, int] | None:
+    """(몇 번째, 표시어가 끝나는 단어 위치). "첫" "번째는" 처럼 나뉜 경우도 찾는다."""
+    for span in (1, 2):
+        if i + span > len(words):
+            break
+        text = "".join(w.text.strip() for w in words[i: i + span])
+        m = ORDINAL.match(text)
+        if m:
+            key = m.group(1) or m.group(2)
+            return (ORDINAL_NUM[key] if key else int(m.group(3))), i + span - 1
     return None
 
 
@@ -82,61 +103,107 @@ def _sentence_end_after(words: list[Word], i: int, limit: int = 14) -> int:
     return min(len(words) - 1, i + limit)
 
 
-def detect_ranks(words: list[Word]) -> list[RankItem]:
-    """"5위는? … 4위는? … 마지막 1위" 흐름을 찾아서 항목과 등장 시점을 추천한다.
+def announced_count(words: list[Word]) -> int | None:
+    """첫 부분에서 말한 개수 ("TOP 3", "3가지", "세 가지")."""
+    head = " ".join(w.text.strip() for w in words[:25])
+    m = COUNT_TOP.search(head)
+    if m:
+        return int(m.group(1))
+    m = COUNT_KINDS.search(head)
+    if m:
+        return int(m.group(1)) if m.group(1) else NATIVE_NUM[m.group(2)]
+    return None
 
-    3개 이상 찾으면 TOP 5 목록을 쓰고, 아니면 빈 목록을 돌려준다.
-    """
+
+def _item_at(words: list[Word], k: int, slot: int, hint_check: bool) -> RankItem:
+    """표시어 바로 다음 말을 항목으로 추천한다."""
+    # "4위는" 다음에 "요?" 같은 짧은 말이 따로 인식되면 건너뛴다
+    while k < len(words) and len(words[k].text.strip()) <= 2 and words[k].text.strip().endswith("?"):
+        k += 1
+    if hint_check:
+        # "마지막 1위 맞춰 볼래? 힌트는 …" 이면 힌트 문장이 끝난 뒤에 공개
+        window = words[k: k + 15]
+        hint = next((k + n for n, w in enumerate(window) if "힌트" in w.text), None)
+        if hint is None and k < len(words) and "맞춰" in " ".join(w.text for w in words[k:k + 4]):
+            hint = k
+        if hint is not None:
+            k = _sentence_end_after(words, hint) + 1
+    if k >= len(words):
+        return RankItem(slot, None, "")
+    end = _sentence_end_after(words, k, limit=3)
+    picked = []
+    for w in words[k: end + 1]:
+        picked.append(w.text.strip())
+        if re.search(r"[,.?!]$", picked[-1]):  # 쉼표에서도 끊는다
+            break
+    return RankItem(slot, round(words[k].start, 2), _clean(" ".join(picked))[:16])
+
+
+def _rank_list(words: list[Word], expected: int | None) -> tuple[int, list[RankItem]] | None:
+    """순위형: "3위는? … 2위는? … 1위" 처럼 큰 순위부터 내려오는 흐름."""
     marks = [(i, r) for i in range(len(words)) if (r := _rank_of(words, i)) is not None]
-    chosen: dict[int, int] = {}
+    if not marks:
+        return None
+    candidates = [expected] if expected else sorted({r for _, r in marks if r >= 2}, reverse=True)
+    for top in candidates:
+        chosen: dict[int, int] = {}
+        prev = -1
+        for rank in range(top, 0, -1):
+            for i, r in marks:
+                if r == rank and i > prev:
+                    chosen[rank] = i
+                    prev = i
+                    break
+        if top in chosen and len(chosen) >= max(2, top - 1):
+            items = [(_item_at(words, chosen[r] + 1, r, r == 1) if r in chosen else RankItem(r, None, ""))
+                     for r in range(top, 0, -1)]
+            return top, items
+    return None
+
+
+def _ordinal_list(words: list[Word], expected: int | None) -> tuple[int, list[RankItem]] | None:
+    """나열형: "첫 번째 … 두 번째 … 마지막(세 번째)" 처럼 1부터 올라가는 흐름."""
+    marks = [(i, *o) for i in range(len(words)) if (o := _ordinal_of(words, i)) is not None]
+    chosen: dict[int, int] = {}  # 번호 → 표시어가 끝나는 단어 위치
     prev = -1
-    for rank in (5, 4, 3, 2, 1):
-        for i, r in marks:
-            if r == rank and i > prev:
-                chosen[rank] = i
-                prev = i
-                break
-    if len(chosen) < 3:
-        return []
-
-    items: list[RankItem] = []
-    for rank in (5, 4, 3, 2, 1):
-        if rank not in chosen:
-            items.append(RankItem(rank, None, ""))
-            continue
-        k = chosen[rank] + 1
-        # "4위는" 다음에 "요?" 같은 짧은 말이 따로 인식되면 건너뛴다
-        while k < len(words) and len(words[k].text.strip()) <= 2 and words[k].text.strip().endswith("?"):
-            k += 1
-        if rank == 1:
-            # "마지막 1위 맞춰 볼래? 힌트는 …" 이면 힌트 문장이 끝난 뒤에 공개
-            window = words[k: k + 15]
-            hint = next((k + n for n, w in enumerate(window) if "힌트" in w.text), None)
-            if hint is None and k < len(words) and "맞춰" in " ".join(w.text for w in words[k:k + 4]):
-                hint = k
-            if hint is not None:
-                k = _sentence_end_after(words, hint) + 1
-        if k >= len(words):
-            items.append(RankItem(rank, None, ""))
-            continue
-        end = _sentence_end_after(words, k, limit=3)
-        picked = []
-        for w in words[k: end + 1]:
-            picked.append(w.text.strip())
-            if re.search(r"[,.?!]$", picked[-1]):  # 쉼표에서도 끊는다
-                break
-        text = _clean(" ".join(picked))[:16]
-        items.append(RankItem(rank, round(words[k].start, 2), text))
-    return items
+    for n in range(1, MAX_ITEMS + 1):
+        hit = next(((i, e) for i, num, e in marks if num == n and i > prev), None)
+        if hit is None:
+            break
+        chosen[n] = hit[1]
+        prev = hit[1]
+    count = expected or len(chosen)
+    # "마지막으로 …" 을 마지막 항목으로 쓴다
+    if count and count not in chosen and len(chosen) == count - 1:
+        last = next((i for i in range(prev + 1, len(words)) if words[i].text.strip().startswith("마지막")), None)
+        if last is not None:
+            chosen[count] = last
+    if count < 2 or len(chosen) < max(2, count - 1):
+        return None
+    items = [(_item_at(words, chosen[n] + 1, n, False) if n in chosen else RankItem(n, None, ""))
+             for n in range(1, count + 1)]
+    return count, items
 
 
-def suggest_title(words: list[Word], top_mode: bool) -> str:
-    """첫 문장으로 제목을 추천한다. TOP 5 영상이면 뒤에 'TOP 5'를 붙인다."""
+def detect_list(words: list[Word]) -> tuple[str, int, list[RankItem]]:
+    """(형식, 개수, 항목들). 형식: "rank"(TOP N, 아래부터) / "ordinal"(N가지, 위부터) / "none"."""
+    expected = announced_count(words)
+    for style, finder in (("rank", _rank_list), ("ordinal", _ordinal_list)):
+        found = finder(words, expected)
+        if found:
+            return style, found[0], found[1]
+    return "none", 0, []
+
+
+def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str:
+    """첫 문장으로 제목을 추천한다. 순위형이면 뒤에 'TOP N'을 붙인다."""
     if not words:
         return ""
     end = _sentence_end_after(words, 0, limit=8)
     text = _clean(" ".join(w.text.strip() for w in words[: end + 1])).rstrip("?!")
-    text = re.sub(r"\s*(TOP\s*5|탑\s*5|탑\s*파이브).*$", "", text, flags=re.I)
+    text = re.sub(r"\s*(TOP|탑)\s*[0-9].*$", "", text, flags=re.I)
+    if style == "rank":
+        text = re.sub(r"\s*(정리해\s*보자|알려\s*줄게|알려\s*드릴게요).*$", "", text)
     if len(text) > 22:
         text = text[:22].rsplit(" ", 1)[0]
-    return f"{text} TOP 5" if top_mode else text
+    return f"{text} TOP {count}" if style == "rank" else text
