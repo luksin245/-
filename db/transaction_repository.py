@@ -116,6 +116,39 @@ def _chunks(ids: list[int]) -> list[list[int]]:
     return [ids[i:i + _ID_CHUNK_SIZE] for i in range(0, len(ids), _ID_CHUNK_SIZE)]
 
 
+def find_expenses_by_amount(amount: int, date_from: str, date_to: str) -> list[dict]:
+    """금액이 정확히 같은 출금 거래를 기간 내에서 찾는다 (카드 명세서 ↔ 카드결 출금 맞춰보기용)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT t.*, cl.name AS client_name, a.name AS account_name
+            FROM transactions t
+            LEFT JOIN clients cl ON t.client_id = cl.id
+            LEFT JOIN chart_of_accounts a ON t.account_id = a.id
+            WHERE t.transaction_type = 'expense' AND t.amount = ?
+              AND t.transaction_date BETWEEN ? AND ?
+            ORDER BY t.transaction_date, t.id
+            """,
+            (amount, date_from, date_to),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_accounting_classification(transaction_id: int, accounting_type: str, account_id: int | None, updated_at: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE transactions SET accounting_type = ?, account_id = ?, updated_at = ? WHERE id = ?",
+            (accounting_type, account_id, updated_at, transaction_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def count_existing_transactions(transaction_ids: list[int]) -> int:
     conn = get_connection()
     try:
@@ -146,6 +179,12 @@ def delete_transactions(transaction_ids: list[int]) -> int:
             conn.execute(
                 f"UPDATE ocr_raw_lines SET linked_transaction_id = NULL "
                 f"WHERE linked_transaction_id IN ({placeholders})",
+                chunk,
+            )
+            # 카드 명세서와 연결된 카드결 출금을 지우는 경우에도 같은 이유로 연결을 먼저 끊는다.
+            conn.execute(
+                f"UPDATE card_statements SET settlement_transaction_id = NULL "
+                f"WHERE settlement_transaction_id IN ({placeholders})",
                 chunk,
             )
             cursor = conn.execute(f"DELETE FROM transactions WHERE id IN ({placeholders})", chunk)

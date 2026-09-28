@@ -118,6 +118,11 @@ accounting_summary = data["accounting_summary"]
 acct_col1, acct_col2 = st.columns(2)
 acct_col1.metric("총매출 (회계구분 기준)", f"{format_amount(accounting_summary['total_revenue'])}원")
 acct_col2.metric("총비용 (회계구분 기준)", f"{format_amount(accounting_summary['total_cost'])}원")
+if accounting_summary["card_cost"]:
+    acct_col2.caption(
+        f"통장 {format_amount(accounting_summary['bank_cost'])}원 + "
+        f"법인카드 {format_amount(accounting_summary['card_cost'])}원 (카드는 이용일자 기준)"
+    )
 
 st.divider()
 

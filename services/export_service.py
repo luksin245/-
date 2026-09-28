@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from services import transaction_service
+from services import card_service, transaction_service
 
 TYPE_LABELS = {"income": "수입", "expense": "지출"}
 
@@ -155,6 +155,49 @@ def export_tax_excel(filters: dict | None = None) -> bytes:
     _apply_column_widths(ws, TAX_COLUMN_WIDTHS)
     ws.freeze_panes = "A2"
 
+    _append_card_sheet(wb, filters)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+CARD_COLUMNS = ["이용일자", "가맹점명", "청구금액", "카테고리", "회계구분", "계정과목", "카드", "명세서 이용기간", "메모"]
+CARD_COLUMN_WIDTHS = [12, 32, 14, 14, 10, 14, 16, 24, 24]
+
+
+def _append_card_sheet(wb: Workbook, filters: dict | None) -> None:
+    """법인카드 사용내역 시트를 추가한다 (해당 기간에 카드 사용내역이 있을 때만).
+
+    통장의 카드값 결제 출금은 첫 시트에 '비비용출금 / 미지급금'으로 나오고, 실제 사용 건별
+    비용은 이 시트에서 확인하도록 분리한다. 기간 필터(시작일/종료일)만 이용일자에 적용한다.
+    """
+    filters = filters or {}
+    lines = card_service.get_lines(start_date=filters.get("start_date"), end_date=filters.get("end_date"))
+    if not lines:
+        return
+    statements = {s["id"]: s for s in card_service.list_statements()}
+
+    ws = wb.create_sheet("법인카드 사용내역")
+    ws.append(CARD_COLUMNS)
+    _style_header(ws)
+    for line in lines:
+        statement = statements.get(line["statement_id"], {})
+        ws.append(
+            [
+                line["use_date"],
+                line["merchant"],
+                line["amount"],
+                line["category_name"] or "",
+                line["accounting_type"],
+                line["account_name"] or "",
+                statement.get("card_name", ""),
+                f"{statement.get('period_start', '')} ~ {statement.get('period_end', '')}",
+                line["memo"] or "",
+            ]
+        )
+    for row in ws.iter_rows(min_row=2, min_col=3, max_col=3):
+        for cell in row:
+            cell.number_format = "#,##0"
+    _apply_column_widths(ws, CARD_COLUMN_WIDTHS)
+    ws.freeze_panes = "A2"

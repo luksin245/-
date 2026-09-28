@@ -130,3 +130,38 @@ CREATE TABLE IF NOT EXISTS ocr_raw_lines (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ocr_raw_lines_document ON ocr_raw_lines (document_id);
+
+-- 법인카드 명세서(월별) + 카드 사용내역.
+-- 카드 사용내역은 통장 거래(transactions)와 분리해서 저장한다. 통장에는 한 달치 카드값이
+-- "카드결" 출금 한 건으로만 찍히므로, 카드 사용 건을 transactions에 넣으면 지출이 두 번
+-- 잡히고 통장 기준 총지출/잔액도 맞지 않게 된다. 카드 사용 건은 회계구분 기준 총비용에만
+-- 반영하고, 통장의 카드결 출금은 명세서와 연결(settlement_transaction_id)해서 맞춰본다.
+CREATE TABLE IF NOT EXISTS card_statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_name TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    billed_total INTEGER NOT NULL,
+    settlement_transaction_id INTEGER REFERENCES transactions (id),
+    memo TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS card_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement_id INTEGER NOT NULL REFERENCES card_statements (id),
+    use_date TEXT NOT NULL,
+    merchant TEXT NOT NULL,
+    -- 청구금액(원). 취소/환불 건은 음수로 저장한다.
+    amount INTEGER NOT NULL CHECK (amount <> 0),
+    category_id INTEGER REFERENCES categories (id),
+    account_id INTEGER REFERENCES chart_of_accounts (id),
+    accounting_type TEXT NOT NULL DEFAULT '미분류'
+        CHECK (accounting_type IN ('매출', '비용', '자금이동', '비매출입금', '비비용출금', '미분류')),
+    memo TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_card_transactions_statement ON card_transactions (statement_id);
+CREATE INDEX IF NOT EXISTS idx_card_transactions_date ON card_transactions (use_date);

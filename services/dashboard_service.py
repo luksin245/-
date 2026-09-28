@@ -5,6 +5,7 @@ UI(views/dashboard_view.py)는 이 모듈의 함수만 호출한다.
 """
 from datetime import date, timedelta
 
+from db import card_repository
 from db import dashboard_repository as dash_repo
 from db import transaction_repository as tx_repo
 
@@ -82,6 +83,11 @@ def get_dashboard_data(start: date, end: date) -> dict:
 
     summary = _with_net_amount(tx_repo.get_transaction_summary(filters))
     accounting_summary = tx_repo.get_accounting_type_summary(filters)
+    # 총비용(회계구분 기준)에는 법인카드 사용내역 중 '비용'도 합산한다. 통장의 카드값 결제
+    # 출금은 명세서와 연결하면 '비비용출금'으로 바뀌므로 같은 돈이 두 번 잡히지 않는다.
+    accounting_summary["bank_cost"] = accounting_summary["total_cost"]
+    accounting_summary["card_cost"] = card_repository.get_cost_total(start_str, end_str)
+    accounting_summary["total_cost"] = accounting_summary["bank_cost"] + accounting_summary["card_cost"]
 
     prev_start, prev_end = get_previous_period(start, end)
     prev_filters = {"start_date": prev_start.isoformat(), "end_date": prev_end.isoformat()}
