@@ -1,0 +1,82 @@
+name: Windows 프로그램 빌드
+
+on:
+  push:
+    branches: [claude/tender-goodall-bpstnr, main]
+    paths-ignore: ["docs/**", "README.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: 실제 음성 인식으로 레퍼런스 분석 (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Whisper 모델 받기
+        run: python -c "from faster_whisper import download_model; download_model('small', output_dir='models/whisper-small')"
+      - name: 레퍼런스 영상 분석
+        run: |
+          for f in reference/근로계약서.mp4 "reference/직장 괴롭힘.mp4" reference/퇴직금.mp4; do
+            echo "===== $f"
+            python -m reels_auto "$f" --no-render --dump /tmp/p.json
+            python -c "import json; p=json.load(open('/tmp/p.json')); print(' / '.join(c['text'] for c in p['captions']))"
+          done
+      - name: 렌더링 한 번
+        run: python -m reels_auto reference/근로계약서.mp4 -o /tmp/out.mp4
+
+  build:
+    name: Windows exe 만들기
+    needs: test
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt pyinstaller
+      - name: Whisper 모델 받기
+        run: python -c "from faster_whisper import download_model; download_model('small', output_dir='models/whisper-small')"
+      - name: exe 만들기
+        run: |
+          pyinstaller --noconfirm --windowed --name ReelsAuto \
+            --collect-all faster_whisper --collect-all ctranslate2 \
+            app.py
+          D=dist/ReelsAuto
+          mkdir -p $D/bin $D/assets $D/models
+          cp "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" $D/bin/ffmpeg.exe
+          cp -r assets/fonts assets/bgm $D/assets/
+          cp -r models/whisper-small $D/models/
+          cp README.md $D/사용법.txt
+      - name: 만든 exe로 실제 테스트
+        run: |
+          ./dist/ReelsAuto/ReelsAuto.exe "reference/퇴직금.mp4" -o "$PWD/테스트_결과.mp4"
+          ls -la 테스트_결과.mp4
+          ./dist/ReelsAuto/bin/ffmpeg.exe -hide_banner -i 테스트_결과.mp4 2>&1 | grep -E "Duration|Stream" || true
+      - name: 압축
+        run: 7z a -tzip ReelsAuto-windows.zip ./dist/ReelsAuto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReelsAuto-windows
+          path: ReelsAuto-windows.zip
+      - name: 다운로드 페이지(Release)에 올리기
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: 릴스 자동 편집 v0.1.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          files: ReelsAuto-windows.zip
+          body: |
+            아래 **ReelsAuto-windows.zip** 을 받아서 압축을 풀고 `ReelsAuto.exe` 를 실행하세요.
+            인터넷 없이 동작합니다 (음성 인식 모델, FFmpeg, 폰트, BGM 포함).
