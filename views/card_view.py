@@ -93,6 +93,68 @@ st.caption(
 version = st.session_state["card_entry_version"]
 if "card_entry_base" not in st.session_state:
     st.session_state["card_entry_base"] = _empty_entry_df()
+st.session_state.setdefault("card_import_version", 0)
+if import_msg := st.session_state.pop("card_import_msg", None):
+    st.info(import_msg)
+
+AI_PROMPT = """첨부한 카드 이용내역 이미지를 엑셀(.xlsx) 파일로 만들어줘.
+- 열은 딱 3개: 이용일자, 가맹점명, 청구금액
+- 이용일자는 2026-08-07 형식
+- 가맹점명은 첫 줄 가게 이름만 (괄호 안 주소/업종은 빼고)
+- 청구금액은 쉼표 없는 숫자만. 해외 결제는 원화 청구금액(예: 28457)
+- 취소/환불은 음수로
+- 소계·합계 줄(일시불, 해외이용 일시불, 카드별 소계, 총합계)은 넣지 마"""
+
+with st.expander("📥 엑셀/CSV 파일로 불러오기 (AI로 만든 파일 등)"):
+    st.markdown(
+        "1. 명세서 캡처를 AI(Claude, ChatGPT 등)에 올리고 아래 요청문을 붙여넣어 엑셀을 만듭니다. "
+        "캡처의 카드번호 부분은 잘라내고 올려도 됩니다.\n"
+        "2. 만든 엑셀을 여기서 불러오면 아래 입력 표에 **채워지기만** 하고 저장되지는 않습니다.\n"
+        "3. **명세서 총합계는 AI 결과가 아니라 명세서를 보고 직접 입력**하세요. "
+        "AI가 숫자를 하나 틀려도 합계 확인에서 걸러집니다."
+    )
+    st.code(AI_PROMPT, language=None)
+    st.download_button(
+        "⬇️ 빈 양식 엑셀 받기",
+        data=card_service.build_import_template(),
+        file_name="카드사용내역_양식.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    import_file = st.file_uploader(
+        "엑셀(.xlsx) 또는 CSV 파일", type=["xlsx", "csv"],
+        key=f"card_import_file_{st.session_state['card_import_version']}",
+    )
+    if st.button("입력 표로 불러오기", disabled=import_file is None, key="card_import_btn"):
+        try:
+            parsed = card_service.parse_lines_file(import_file.getvalue(), import_file.name)
+            active_category_names = {c["name"] for c in active_expense_categories}
+            active_account_names = {a["name"] for a in active_accounts}
+            cleared = set()
+            for row in parsed["rows"]:
+                if row["카테고리"] is not None and row["카테고리"] not in active_category_names:
+                    cleared.add(f"카테고리 '{row['카테고리']}'")
+                    row["카테고리"] = None
+                if row["계정과목"] is not None and row["계정과목"] not in active_account_names:
+                    cleared.add(f"계정과목 '{row['계정과목']}'")
+                    row["계정과목"] = None
+            imported = pd.DataFrame(parsed["rows"], columns=list(_empty_entry_df().columns))
+            imported["이용일자"] = pd.to_datetime(imported["이용일자"])
+            imported["청구금액"] = imported["청구금액"].astype("Int64")
+            st.session_state["card_entry_base"] = imported
+            st.session_state["card_entry_version"] += 1
+            st.session_state["card_import_version"] += 1
+            notes = [
+                f"{len(parsed['rows'])}건을 입력 표에 불러왔습니다 (합계 {format_amount(int(imported['청구금액'].sum()))}원). "
+                "아직 저장되지 않았습니다. 명세서 총합계를 직접 입력해 일치하는지 확인한 뒤 저장하세요."
+            ]
+            if parsed["skipped"]:
+                notes.append(f"소계·합계 줄로 보여 건너뛴 줄: {', '.join(parsed['skipped'])}")
+            if cleared:
+                notes.append(f"등록되지 않은(또는 비활성) 항목이라 비워둔 값: {', '.join(sorted(cleared))}")
+            st.session_state["card_import_msg"] = "\n\n".join(notes)
+            st.rerun()
+        except ValidationError as e:
+            st.error(str(e))
 
 last_month_end = date.today().replace(day=1) - timedelta(days=1)
 col_card, col_start, col_end, col_total = st.columns([2, 1, 1, 1])

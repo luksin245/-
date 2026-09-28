@@ -271,3 +271,157 @@ def delete_statement(statement_id: int) -> None:
 
 def get_card_cost_total(start_date: str, end_date: str) -> int:
     return card_repository.get_cost_total(start_date, end_date)
+
+
+# ---------------------------------------------------------------------
+# 엑셀/CSV 불러오기 (AI 등으로 만든 파일 -> 입력 표 채우기용. 저장은 하지 않는다)
+# ---------------------------------------------------------------------
+IMPORT_REQUIRED_COLUMNS = ("이용일자", "가맹점명", "청구금액")
+IMPORT_OPTIONAL_COLUMNS = ("카테고리", "회계구분", "계정과목", "메모")
+# 같은 뜻으로 흔히 쓰는 열 이름. '이용금액'은 해외 결제에서 외화 금액이라 일부러 받지 않는다.
+_COLUMN_ALIASES = {
+    "이용일": "이용일자", "이용 일자": "이용일자", "거래일자": "이용일자", "일자": "이용일자", "날짜": "이용일자",
+    "가맹점": "가맹점명", "가맹점 명": "가맹점명", "사용처": "가맹점명",
+    "청구 금액": "청구금액", "청구금액(원)": "청구금액", "금액": "청구금액", "금액(원)": "청구금액",
+}
+# 명세서의 소계·합계 줄(이용일자 없이 가맹점명 칸에만 글자가 있는 줄)은 사용내역이 아니므로 건너뛴다.
+_SUBTOTAL_MARKERS = ("합계", "소계", "일시불", "할부")
+
+
+def _import_date(value, row_no: int) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip().split(" ")[0].rstrip(".")
+    for sep in (".", "/"):
+        text = text.replace(sep, "-")
+    parts = text.split("-")
+    try:
+        if len(parts) == 3:
+            year, month, day = (int(p) for p in parts)
+            if year < 100:
+                year += 2000
+            return date(year, month, day)
+    except ValueError:
+        pass
+    raise ValidationError(f"{row_no}행: 이용일자 '{value}'를 읽을 수 없습니다 (예: 2026-08-07).")
+
+
+def _import_amount(value, row_no: int) -> int:
+    if isinstance(value, bool):
+        raise ValidationError(f"{row_no}행: 청구금액 '{value}'를 읽을 수 없습니다.")
+    if isinstance(value, (int, float)):
+        if float(value) != int(value):
+            raise ValidationError(f"{row_no}행: 청구금액 {value}은(는) 원 단위 정수가 아닙니다. 원화 청구금액을 넣어주세요.")
+        return int(value)
+    text = str(value).replace(",", "").replace("원", "").replace(" ", "").strip()
+    if text.lstrip("-").isdigit():
+        return int(text)
+    raise ValidationError(f"{row_no}행: 청구금액 '{value}'를 읽을 수 없습니다 (숫자만, 예: 27000).")
+
+
+def _read_table(file_bytes: bytes, filename: str):
+    import io
+
+    import pandas as pd
+
+    name = filename.lower()
+    if name.endswith(".xlsx"):
+        return pd.read_excel(io.BytesIO(file_bytes), sheet_name=0, dtype=object)
+    if name.endswith(".csv"):
+        for encoding in ("utf-8-sig", "cp949"):
+            try:
+                return pd.read_csv(io.BytesIO(file_bytes), dtype=object, encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+        raise ValidationError("CSV 파일의 글자 인코딩을 읽을 수 없습니다. 엑셀(.xlsx)로 저장해서 올려주세요.")
+    raise ValidationError("엑셀(.xlsx) 또는 CSV(.csv) 파일만 불러올 수 있습니다.")
+
+
+def parse_lines_file(file_bytes: bytes, filename: str) -> dict:
+    """엑셀/CSV 파일에서 카드 사용내역을 읽는다. 저장하지 않고 입력 표에 채울 값만 돌려준다.
+
+    이용일자·청구금액을 읽을 수 없으면 추정하지 않고 몇 행인지 알려주는 오류를 낸다.
+    반환값: {"rows": [...], "skipped": ["총합계", ...]}
+    """
+    import pandas as pd
+
+    df = _read_table(file_bytes, filename)
+    df.columns = [_COLUMN_ALIASES.get(str(c).strip(), str(c).strip()) for c in df.columns]
+    missing = [c for c in IMPORT_REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValidationError(
+            f"필수 열이 없습니다: {', '.join(missing)}. 첫 줄(제목 줄)에 이용일자, 가맹점명, 청구금액이 있어야 합니다."
+        )
+
+    def cell(row, column):
+        value = row.get(column) if column in df.columns else None
+        if value is None or (not isinstance(value, str) and pd.isna(value)):
+            return None
+        return value.strip() if isinstance(value, str) else value
+
+    rows, skipped = [], []
+    for idx, row in df.iterrows():
+        row_no = idx + 2  # 엑셀 기준 행 번호 (1행은 제목 줄)
+        raw_date, merchant, raw_amount = cell(row, "이용일자"), cell(row, "가맹점명"), cell(row, "청구금액")
+        if raw_date is None and merchant is None and raw_amount is None:
+            continue
+        if raw_date is None and merchant and any(m in str(merchant) for m in _SUBTOTAL_MARKERS):
+            skipped.append(str(merchant))
+            continue
+        if raw_date is None:
+            raise ValidationError(f"{row_no}행: 이용일자가 비어 있습니다.")
+        if merchant is None:
+            raise ValidationError(f"{row_no}행: 가맹점명이 비어 있습니다.")
+        if raw_amount is None:
+            raise ValidationError(f"{row_no}행: 청구금액이 비어 있습니다.")
+        accounting_type = cell(row, "회계구분")
+        if accounting_type is not None and accounting_type not in ACCOUNTING_TYPE_OPTIONS:
+            raise ValidationError(
+                f"{row_no}행: 회계구분 '{accounting_type}'은(는) 쓸 수 없습니다 ({', '.join(ACCOUNTING_TYPE_OPTIONS)} 중 하나)."
+            )
+        rows.append(
+            {
+                "이용일자": _import_date(raw_date, row_no),
+                "가맹점명": str(merchant),
+                "청구금액": _import_amount(raw_amount, row_no),
+                "카테고리": cell(row, "카테고리"),
+                "회계구분": accounting_type,
+                "계정과목": cell(row, "계정과목"),
+                "메모": None if cell(row, "메모") is None else str(cell(row, "메모")),
+            }
+        )
+    if not rows:
+        raise ValidationError("불러올 사용내역이 없습니다. 2행부터 사용내역을 한 줄씩 넣어주세요.")
+    return {"rows": rows, "skipped": skipped}
+
+
+def build_import_template() -> bytes:
+    """불러오기용 빈 양식 엑셀. 첫 시트는 제목 줄만, 둘째 시트에 작성 방법을 적는다."""
+    import io
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "사용내역"
+    ws.append(list(IMPORT_REQUIRED_COLUMNS + IMPORT_OPTIONAL_COLUMNS))
+    for col, width in zip("ABCDEFG", (12, 32, 14, 14, 10, 14, 24)):
+        ws.column_dimensions[col].width = width
+
+    guide = wb.create_sheet("작성방법")
+    for line in (
+        ["필수: 이용일자, 가맹점명, 청구금액 / 나머지 열은 비워도 됩니다."],
+        ["이용일자: 2026-08-07 형식"],
+        ["청구금액: 원 단위 숫자만 (해외 결제는 원화 청구금액, 취소·환불은 음수)"],
+        ["소계·합계 줄(일시불, 카드별 소계, 총합계 등)은 넣지 마세요."],
+        [f"회계구분: {', '.join(ACCOUNTING_TYPE_OPTIONS)} 중 하나 (비워두면 미분류)"],
+        ["예시) 2026-08-07 | 주식회사 아성다이소 | 27000"],
+    ):
+        guide.append(line)
+    guide.column_dimensions["A"].width = 80
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
