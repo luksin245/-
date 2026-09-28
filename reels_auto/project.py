@@ -38,6 +38,9 @@ class Project:
     items: list[RankItem] = field(default_factory=list)  # 5위부터 1위 순서
     bgm: str | None = None
     bgm_volume: float = 0.18
+    face_box: list[int] | None = None  # 출력 화면 기준 얼굴 상자 [x, y, w, h]
+    retouch: str = "약하게"  # 피부 보정: 끄기/약하게/보통/강하게
+    slim: str = "약하게"  # 얼굴형 갸름하게: 끄기/약하게/보통/강하게
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)

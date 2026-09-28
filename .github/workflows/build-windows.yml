@@ -51,7 +51,7 @@ jobs:
       - name: exe 만들기
         run: |
           pyinstaller --noconfirm --windowed --name ReelsAuto \
-            --collect-all faster_whisper --collect-all ctranslate2 \
+            --collect-all faster_whisper --collect-all ctranslate2 --collect-data cv2 \
             app.py
           D=dist/ReelsAuto
           mkdir -p $D/bin $D/assets $D/models

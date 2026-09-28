@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
 from .analyze import retime_captions
+from .face import DEFAULT_LEVEL, DEFAULT_SLIM, LEVELS, SLIM_LEVELS
 from .paths import bgm_dir
 from .project import Project
 
@@ -26,8 +27,8 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.busy = False
         root.title(f"릴스 자동 편집 v{__version__}")
-        root.geometry("1040x720")
-        root.minsize(900, 620)
+        root.geometry("1040x780")
+        root.minsize(900, 700)
         self._build()
         self._set_enabled(False)
         root.after(100, self._poll)
@@ -94,6 +95,18 @@ class App:
         ttk.Label(vol, text="음악 크기").pack(side="left")
         self.vol_var = tk.DoubleVar(value=0.18)
         ttk.Scale(vol, from_=0.02, to=0.5, variable=self.vol_var, length=220).pack(side="left", padx=6)
+
+        ttk.Label(left, text="얼굴 자동 보정").pack(anchor="w", pady=(10, 0))
+        faces = ttk.Frame(left)
+        faces.pack(anchor="w")
+        ttk.Label(faces, text="피부 결").grid(row=0, column=0, sticky="w")
+        self.retouch_var = tk.StringVar(value=DEFAULT_LEVEL)
+        ttk.Combobox(faces, textvariable=self.retouch_var, values=list(LEVELS), state="readonly", width=8).grid(row=0, column=1, padx=6, pady=2)
+        ttk.Label(faces, text="얼굴형 갸름하게").grid(row=1, column=0, sticky="w")
+        self.slim_var = tk.StringVar(value=DEFAULT_SLIM)
+        ttk.Combobox(faces, textvariable=self.slim_var, values=list(SLIM_LEVELS), state="readonly", width=8).grid(row=1, column=1, padx=6, pady=2)
+        self.face_note = ttk.Label(left, text="", foreground="#666")
+        self.face_note.pack(anchor="w")
 
         ttk.Label(right, text="자막 (한 줄 = 화면에 한 번 나오는 자막 · 글자만 고치면 타이밍은 그대로)").pack(anchor="w")
         sub_frame = ttk.Frame(right)
@@ -169,6 +182,9 @@ class App:
             self.bgm_paths.setdefault(name, p.bgm)
         self.bgm_var.set(name)
         self.vol_var.set(p.bgm_volume)
+        self.retouch_var.set(p.retouch)
+        self.slim_var.set(p.slim)
+        self.face_note.configure(text="얼굴을 찾았어요" if p.face_box else "얼굴을 못 찾아서 밝기·혈색만 보정해요")
         self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개")
 
     def _collect(self) -> Project:
@@ -192,6 +208,8 @@ class App:
         choice = self.bgm_var.get()
         p.bgm = self.bgm_paths.get(choice) if choice not in (NO_BGM, PICK_BGM) else None
         p.bgm_volume = float(self.vol_var.get())
+        p.retouch = self.retouch_var.get()
+        p.slim = self.slim_var.get()
         return p
 
     def start_render(self) -> None:

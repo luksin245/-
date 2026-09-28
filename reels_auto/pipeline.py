@@ -32,6 +32,10 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         cut = cutter.cut_audio(audio, 16000, segments)
         words = transcribe(cut, lambda f: report("음성 인식 중", 0.1 + 0.85 * f))
 
+    report("얼굴 위치 찾는 중", 0.97)
+    from .face import detect_face_box
+
+    face_box = detect_face_box(source, segments)
     items = analyze.detect_ranks(words)
     top_mode = bool(items)
     report("완료", 1.0)
@@ -45,4 +49,5 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         top_mode=top_mode,
         items=items,
         bgm=default_bgm(),
+        face_box=face_box,
     )

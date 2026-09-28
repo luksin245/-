@@ -120,7 +120,12 @@ def detect_ranks(words: list[Word]) -> list[RankItem]:
             items.append(RankItem(rank, None, ""))
             continue
         end = _sentence_end_after(words, k, limit=3)
-        text = _clean(" ".join(w.text.strip() for w in words[k: end + 1]))[:16]
+        picked = []
+        for w in words[k: end + 1]:
+            picked.append(w.text.strip())
+            if re.search(r"[,.?!]$", picked[-1]):  # 쉼표에서도 끊는다
+                break
+        text = _clean(" ".join(picked))[:16]
         items.append(RankItem(rank, round(words[k].start, 2), text))
     return items
 

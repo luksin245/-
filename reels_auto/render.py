@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+from . import face
 from .ass import build_ass
 from .cutter import FPS
 from .media import run_ffmpeg
@@ -17,15 +18,14 @@ def _keep_expr(segments: list[tuple[float, float]]) -> str:
     return "+".join(f"gte(t,{s:.4f})*lt(t,{e:.4f})" for s, e in segments)
 
 
-def build_filter(p: Project) -> str:
+def build_filter(p: Project, face_graph: str) -> str:
     keep = _keep_expr(p.segments)
     d = p.duration
     parts = [
-        f"[0:v]fps={FPS},select='{keep}',setpts=N/{FPS}/TB,"
-        # 픽셀이 정사각형이 아닌 영상(SAR≠1)도 실제 보이는 비율대로 맞춘다
-        f"scale='trunc(iw*sar/2)*2':ih,setsar=1,"
-        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
-        f"subtitles=f=subs.ass:fontsdir=fonts,format=yuv420p[vout]",
+        # 픽셀이 정사각형이 아닌 영상(SAR≠1)도 실제 보이는 비율대로 세로 화면에 맞춘다
+        f"[0:v]fps={FPS},select='{keep}',setpts=N/{FPS}/TB,{face.FIT}[vfit]",
+        face_graph,
+        "[vface]subtitles=f=subs.ass:fontsdir=fonts,format=yuv420p[vout]",
         f"[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
         f"aselect='{keep}',asetpts=N/SR/TB,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice]",
     ]
@@ -52,11 +52,16 @@ def render(p: Project, output: str, on_progress: Callable[[float], None] | None 
         # subtitles 필터는 Windows 경로(C:\...)를 다루기 까다로워서, 작업 폴더 안의 상대 경로만 쓴다
         (work / "subs.ass").write_text(build_ass(p), encoding="utf-8")
         shutil.copytree(fonts_dir(), work / "fonts")
-        (work / "graph.txt").write_text(build_filter(p), encoding="utf-8")
 
         args = ["-y", "-i", str(Path(p.source).resolve())]
         if p.bgm:
             args += ["-stream_loop", "-1", "-i", str(Path(p.bgm).resolve())]
+        first_extra = 2 if p.bgm else 1
+        face_graph, images = face.build_graph(str(work), p.retouch, p.slim, p.face_box, first_extra)
+        for img in images:
+            args += ["-loop", "1", "-framerate", str(FPS), "-i", img]
+        (work / "graph.txt").write_text(build_filter(p, face_graph), encoding="utf-8")
+
         args += [
             "-/filter_complex", "graph.txt", "-map", "[vout]", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-r", str(FPS),
