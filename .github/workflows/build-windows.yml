@@ -13,6 +13,7 @@ jobs:
   test:
     name: 실제 음성 인식으로 레퍼런스 분석 (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,7 +25,7 @@ jobs:
         run: python -c "from faster_whisper import download_model; download_model('small', output_dir='models/whisper-small')"
       - name: 레퍼런스 영상 분석
         run: |
-          for f in reference/근로계약서.mp4 "reference/직장 괴롭힘.mp4" reference/퇴직금.mp4; do
+          for f in reference/근로계약서.mp4 "reference/직장 괴롭힘.mp4" reference/퇴직금.mp4 "reference/퇴사 챙길 돈.mp4"; do
             echo "===== $f"
             python -m reels_auto "$f" --no-render --dump /tmp/p.json
             python -c "import json; p=json.load(open('/tmp/p.json')); print(' / '.join(c['text'] for c in p['captions']))"
@@ -36,6 +37,7 @@ jobs:
     name: Windows exe 만들기
     needs: test
     runs-on: windows-latest
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -50,7 +52,7 @@ jobs:
         run: python -c "from faster_whisper import download_model; download_model('small', output_dir='models/whisper-small')"
       - name: exe 만들기
         run: |
-          pyinstaller --noconfirm --windowed --name ReelsAuto \
+          pyinstaller --noconfirm --windowed --disable-windowed-traceback --name ReelsAuto \
             --collect-all faster_whisper --collect-all ctranslate2 --collect-data cv2 \
             app.py
           D=dist/ReelsAuto
@@ -60,6 +62,7 @@ jobs:
           cp -r models/whisper-small $D/models/
           cp README.md $D/사용법.txt
       - name: 만든 exe로 실제 테스트
+        timeout-minutes: 20
         run: |
           ./dist/ReelsAuto/ReelsAuto.exe "reference/퇴직금.mp4" -o "$PWD/테스트_결과.mp4"
           ls -la 테스트_결과.mp4

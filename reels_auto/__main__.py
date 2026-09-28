@@ -69,6 +69,12 @@ def main() -> None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    # Windows 기본 콘솔 인코딩(cp1252 등)으로는 한글을 출력하다 멈추므로 UTF-8로 바꾼다
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     if len(sys.argv) > 1:
         sys.exit(cli(sys.argv[1:]))
     from .gui import run
