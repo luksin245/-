@@ -109,7 +109,7 @@ if msg := st.session_state.pop("account_msg", None):
     st.success(msg)
 if msg := st.session_state.pop("rule_msg", None):
     st.success(msg)
-for _prefix in ("client", "category", "rule"):
+for _prefix in ("client", "category", "work_type", "account", "rule"):
     if warn := st.session_state.pop(f"{_prefix}_warn", None):
         st.warning(warn)
 
@@ -393,23 +393,6 @@ elif active_tab == "업무유형":
             except ValidationError as e:
                 st.error(str(e))
 
-    @st.dialog("업무유형 비활성화")
-    def open_deactivate_work_type_dialog(work_type: dict) -> None:
-        st.warning(
-            f"'{work_type['name']}'을(를) 비활성화하시겠습니까?\n\n"
-            "기존 거래내역은 유지되며, 신규 거래 등록에서는 선택되지 않습니다."
-        )
-        col_confirm, col_cancel = st.columns(2)
-        with col_confirm:
-            if st.button("비활성화", type="primary", key=f"confirm_deactivate_work_type_{work_type['id']}", use_container_width=True):
-                work_type_service.deactivate_work_type(work_type["id"])
-                st.session_state["work_type_msg"] = f"'{work_type['name']}'을(를) 비활성화했습니다."
-                st.session_state["work_type_clear_selection"] = True
-                st.rerun()
-        with col_cancel:
-            if st.button("취소", key=f"cancel_deactivate_work_type_{work_type['id']}", use_container_width=True):
-                st.rerun()
-
     if st.button("+ 새 업무유형 추가", key="open_add_work_type"):
         open_add_work_type_dialog()
 
@@ -430,40 +413,20 @@ elif active_tab == "업무유형":
             }
             for w in work_types_admin
         ]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-        st.caption("아래에서 수정 또는 상태를 변경할 업무유형을 선택하세요.")
-
-        def _fmt_work_type_option(i: int | None) -> str:
-            if i is None:
-                return "(선택 안함)"
-            w = work_types_admin[i]
-            return f"{w['name']} ({'활성' if w['is_active'] else '비활성'})"
-
-        work_type_selected_idx = st.selectbox(
-            "수정 또는 상태변경할 업무유형 선택",
-            options=list(range(len(work_types_admin))),
-            format_func=_fmt_work_type_option,
-            index=None,
-            placeholder="(선택 안함)",
-            key=f"work_type_selected_idx_{st.session_state['work_type_select_suffix']}",
+        st.caption(
+            "표 왼쪽 '선택' 칸을 체크한 뒤 아래 버튼으로 바로 수정(1개만 체크)하거나 비활성화하세요. "
+            "비활성화해도 기존 거래내역은 그대로이며, 신규 거래 등록에서만 선택되지 않습니다."
         )
-        selected_work_type = work_types_admin[work_type_selected_idx] if work_type_selected_idx is not None else None
-
+        checked_work_types = _checkbox_table(rows, work_types_admin, "work_type")
         col_edit, col_toggle = st.columns(2)
         with col_edit:
-            if st.button("✏️ 수정", disabled=selected_work_type is None, key="work_type_edit_btn", use_container_width=True):
-                open_edit_work_type_dialog(selected_work_type)
+            _edit_button(checked_work_types, "work_type", open_edit_work_type_dialog)
         with col_toggle:
-            if selected_work_type is not None and not selected_work_type["is_active"]:
-                if st.button("♻️ 재활성화", key="work_type_activate_btn", use_container_width=True):
-                    work_type_service.activate_work_type(selected_work_type["id"])
-                    st.session_state["work_type_msg"] = f"'{selected_work_type['name']}'을(를) 재활성화했습니다."
-                    st.session_state["work_type_clear_selection"] = True
-                    st.rerun()
-            else:
-                if st.button("🚫 비활성화", disabled=selected_work_type is None, key="work_type_deactivate_btn", use_container_width=True):
-                    open_deactivate_work_type_dialog(selected_work_type)
+            _status_button(
+                checked_work_types, "work_type", work_type_service.activate_work_type,
+                work_type_service.deactivate_work_type, lambda w: f"'{w['name']}'",
+                note="기존 거래내역은 그대로 유지됩니다.",
+            )
 
 
 # =====================================================================
@@ -504,23 +467,6 @@ elif active_tab == "계정과목":
             except ValidationError as e:
                 st.error(str(e))
 
-    @st.dialog("계정과목 비활성화")
-    def open_deactivate_account_dialog(account: dict) -> None:
-        st.warning(
-            f"'{account['name']}'을(를) 비활성화하시겠습니까?\n\n"
-            "기존 거래내역은 유지되며, 신규 거래 등록에서는 선택되지 않습니다."
-        )
-        col_confirm, col_cancel = st.columns(2)
-        with col_confirm:
-            if st.button("비활성화", type="primary", key=f"confirm_deactivate_account_{account['id']}", use_container_width=True):
-                account_service.deactivate_account(account["id"])
-                st.session_state["account_msg"] = f"'{account['name']}'을(를) 비활성화했습니다."
-                st.session_state["account_clear_selection"] = True
-                st.rerun()
-        with col_cancel:
-            if st.button("취소", key=f"cancel_deactivate_account_{account['id']}", use_container_width=True):
-                st.rerun()
-
     if st.button("+ 새 계정과목 추가", key="open_add_account"):
         open_add_account_dialog()
 
@@ -541,40 +487,19 @@ elif active_tab == "계정과목":
             }
             for a in accounts_admin
         ]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-        st.caption("아래에서 수정 또는 상태를 변경할 계정과목을 선택하세요.")
-
-        def _fmt_account_option(i: int | None) -> str:
-            if i is None:
-                return "(선택 안함)"
-            a = accounts_admin[i]
-            return f"{a['name']} ({'활성' if a['is_active'] else '비활성'})"
-
-        account_selected_idx = st.selectbox(
-            "수정 또는 상태변경할 계정과목 선택",
-            options=list(range(len(accounts_admin))),
-            format_func=_fmt_account_option,
-            index=None,
-            placeholder="(선택 안함)",
-            key=f"account_selected_idx_{st.session_state['account_select_suffix']}",
+        st.caption(
+            "표 왼쪽 '선택' 칸을 체크한 뒤 아래 버튼으로 바로 수정(1개만 체크)하거나 비활성화하세요. "
+            "비활성화해도 기존 거래내역은 그대로이며, 신규 거래 등록에서만 선택되지 않습니다."
         )
-        selected_account = accounts_admin[account_selected_idx] if account_selected_idx is not None else None
-
+        checked_accounts = _checkbox_table(rows, accounts_admin, "account")
         col_edit, col_toggle = st.columns(2)
         with col_edit:
-            if st.button("✏️ 수정", disabled=selected_account is None, key="account_edit_btn", use_container_width=True):
-                open_edit_account_dialog(selected_account)
+            _edit_button(checked_accounts, "account", open_edit_account_dialog)
         with col_toggle:
-            if selected_account is not None and not selected_account["is_active"]:
-                if st.button("♻️ 재활성화", key="account_activate_btn", use_container_width=True):
-                    account_service.activate_account(selected_account["id"])
-                    st.session_state["account_msg"] = f"'{selected_account['name']}'을(를) 재활성화했습니다."
-                    st.session_state["account_clear_selection"] = True
-                    st.rerun()
-            else:
-                if st.button("🚫 비활성화", disabled=selected_account is None, key="account_deactivate_btn", use_container_width=True):
-                    open_deactivate_account_dialog(selected_account)
+            _status_button(
+                checked_accounts, "account", account_service.activate_account, account_service.deactivate_account,
+                lambda a: f"'{a['name']}'", note="기존 거래내역은 그대로 유지됩니다.",
+            )
 
 
 # =====================================================================
