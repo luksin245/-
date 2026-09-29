@@ -53,6 +53,8 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -77,7 +79,9 @@ jobs:
         timeout-minutes: 20
         run: |
           # 퀴즈형 영상으로 테스트 (스티커·카드·O/X 그림까지 exe 안에서 제대로 쓰이는지 확인)
-          ./dist/ReelsAuto/ReelsAuto.exe "$(python tools/find_ref.py 퀴즈)" -o "$PWD/테스트_결과.mp4"
+          src="$(python tools/find_ref.py 퀴즈)"
+          test -n "$src"  # 빈 경로면 exe가 창 모드로 떠서 멈추므로 바로 실패시킨다
+          ./dist/ReelsAuto/ReelsAuto.exe "$src" -o "$PWD/테스트_결과.mp4"
           ls -la 테스트_결과.mp4
           ./dist/ReelsAuto/bin/ffmpeg.exe -hide_banner -i 테스트_결과.mp4 2>&1 | grep -E "Duration|Stream" || true
       - name: 압축

@@ -6,6 +6,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
+# Windows 기본 콘솔 인코딩으로는 한글 경로를 출력하지 못하므로 UTF-8로
+sys.stdout.reconfigure(encoding="utf-8")
 word = unicodedata.normalize("NFC", sys.argv[1])
 for f in sorted(Path(__file__).resolve().parent.parent.glob("reference/*.mp4")):
     if word in unicodedata.normalize("NFC", f.name):
