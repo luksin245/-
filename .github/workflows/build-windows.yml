@@ -33,6 +33,8 @@ jobs:
       - name: 실제 원본(원본테스트.mp4) 분석 결과 기록
         run: |
           src="$(python tools/find_ref.py 원본테스트)"
+          echo "--- 조각별 따로 받아 적기"
+          python tools/segment_report.py "$src"
           python -m reels_auto "$src" --no-render --dump /tmp/raw_test.json
           echo "=====PROJECT_JSON_BEGIN"
           python -c "import json; d=json.load(open('/tmp/raw_test.json')); print(json.dumps(d, ensure_ascii=False))"

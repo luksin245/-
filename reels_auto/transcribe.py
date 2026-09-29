@@ -41,6 +41,7 @@ def transcribe(audio16k: np.ndarray, on_progress: Callable[[float], None] | None
         audio16k, language="ko", word_timestamps=True, beam_size=5,
         vad_filter=False, condition_on_previous_text=False,
         initial_prompt=(glossary() + ". " + PROMPT).lstrip(". "),
+        hotwords=glossary() or None,  # 용어 사전을 더 강하게 반영
     )
     words: list[Word] = []
     for seg in segments:

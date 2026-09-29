@@ -153,8 +153,8 @@ def _item_at(words: list[Word], k: int, slot: int, hint_check: bool) -> RankItem
             k = _sentence_end_after(words, hint) + 1
     if k >= len(words):
         return RankItem(slot, None, "")
-    # 앞에 붙은 "아니"(말 바꿈)는 뺀다
-    while k < len(words) - 1 and words[k].text.strip().strip(",.") in ("아니", "아니야"):
+    # 앞에 붙은 "아니"(말 바꿈), "맞아/정답"(맞장구)는 뺀다
+    while k < len(words) - 1 and words[k].text.strip().strip(",.!?") in ("아니", "아니야", "맞아", "정답", "정답은", "응", "네"):
         k += 1
     end = _sentence_end_after(words, k, limit=3)
     picked = []
@@ -163,7 +163,12 @@ def _item_at(words: list[Word], k: int, slot: int, hint_check: bool) -> RankItem
         # 다음 순위 질문("3위는요?")이나 "마지막"이 나오면 거기서 끊는다
         if picked and (_rank_of(words, idx) is not None or w.text.strip().startswith("마지막")):
             break
-        picked.append(w.text.strip())
+        t = w.text.strip()
+        # "근로계약서 작성을 안 하면" → "근로계약서 작성": 두 번째 단어부터 목적격·주격 조사가 붙으면 떼고 끊는다
+        if picked and re.search(r"[을를]$", t.rstrip(",.?!")):
+            picked.append(t.rstrip(",.?!")[:-1])
+            break
+        picked.append(t)
         if re.search(r"[,.?!]$", picked[-1]):  # 쉼표에서도 끊는다
             break
     text = _clean(" ".join(picked))
