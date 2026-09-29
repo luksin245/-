@@ -134,6 +134,7 @@ def line(layer: int, start: float, end: float, style: str, text: str) -> str:
 
 TITLE_MAX_W = 1000  # 제목 한 줄이 이보다 넓으면 글자를 줄인다
 TITLE_BLUR = 4  # 회색 테두리·그림자를 부드럽게 번지게
+TITLE_SLANT = -0.15  # 레퍼런스처럼 오른쪽으로 살짝 기울임 (0이면 똑바로)
 
 
 def title_tag(title: str, title_font: str) -> str:
@@ -141,7 +142,7 @@ def title_tag(title: str, title_font: str) -> str:
     size = TITLE_FONTS.get(title_font, TITLE_FONTS[DEFAULT_TITLE_FONT])[1]
     widest = max(title_width(ln, size) for ln in title.split("\n"))
     fit = f"\\fs{int(size * TITLE_MAX_W / widest)}" if widest > TITLE_MAX_W else ""
-    return f"{{\\an8\\pos({W // 2},{TITLE_TOP_Y})\\blur{TITLE_BLUR}{fit}}}"
+    return f"{{\\an8\\pos({W // 2},{TITLE_TOP_Y})\\blur{TITLE_BLUR}\\fax{TITLE_SLANT}{fit}}}"
 
 
 def header(title_font: str = DEFAULT_TITLE_FONT) -> str:
