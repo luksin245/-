@@ -72,7 +72,7 @@ class App:
         tf.pack(anchor="w", pady=(2, 8))
         ttk.Label(tf, text="제목 글꼴").pack(side="left")
         self.title_font_var = tk.StringVar(value=DEFAULT_TITLE_FONT)
-        ttk.Combobox(tf, textvariable=self.title_font_var, values=list(TITLE_FONTS), state="readonly", width=12).pack(side="left", padx=6)
+        ttk.Combobox(tf, textvariable=self.title_font_var, values=list(TITLE_FONTS), state="readonly", width=16, height=22).pack(side="left", padx=6)
 
         fmt = ttk.Frame(left)
         fmt.pack(anchor="w")

@@ -17,6 +17,22 @@ TITLE_FONTS = {
     "고운바탕": ("Gowun Batang", 78),
     "검은고딕": ("Black Han Sans", 78),
     "나눔명조": ("NanumMyeongjoExtraBold", 78),
+    "원티드 산스": ("Wanted Sans ExtraBold", 76),
+    "나눔스퀘어라운드": ("NanumSquareRound ExtraBold", 76),
+    "고딕 A1": ("Gothic A1 ExtraBold", 74),
+    "노토 산스": ("Noto Sans KR Black", 74),
+    "나눔고딕": ("NanumGothicExtraBold", 76),
+    "함렛": ("Hahmlet ExtraBold", 74),
+    "송명": ("Song Myung", 80),
+    "고운돋움": ("Gowun Dodum", 78),
+    "해바라기": ("Sunflower", 80),
+    "도현": ("Do Hyeon", 82),
+    "주아": ("Jua", 80),
+    "베이글": ("Bagel Fat One", 76),
+    "가석": ("Gasoek One", 76),
+    "오르빗": ("Orbit", 74),
+    "디필레이아": ("Diphylleia", 78),
+    "나눔손글씨 펜": ("Nanum Pen", 96),
 }
 DEFAULT_TITLE_FONT = "프리텐다드"
 SUB_FONT = "Pretendard Medium"
