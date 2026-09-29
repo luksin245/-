@@ -58,7 +58,7 @@
 무료 음원은 YouTube 오디오 보관함 등에서 받을 수 있습니다 (각 음원의 사용 조건을 확인하세요).
 
 ## 포함된 무료 자료
-- 폰트: 제목 글꼴은 프로그램에서 22가지 중에 고를 수 있음 (프리텐다드 · 원티드 산스 · 나눔스퀘어라운드 · 함렛 · 도현 · 주아 등), 자막·목록은 Pretendard – 모두 SIL Open Font License
+- 폰트: 제목은 기본 나눔명조 ExtraBold(흰 글씨 + 회색 그림자), 프로그램에서 다른 글꼴 21가지 중에 바꿀 수도 있음, 자막·목록은 Pretendard – 모두 SIL Open Font License
 - BGM: `tools/make_bgm.py` 로 직접 합성한 음악 (저작권 걱정 없음)
 - 그림 스티커: Microsoft Fluent Emoji 3D – MIT License
 - 음성 인식: faster-whisper `small` 모델 (MIT)

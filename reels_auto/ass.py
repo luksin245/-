@@ -16,7 +16,7 @@ TITLE_FONTS = {
     "노토 세리프": ("Noto Serif KR Black", 74),
     "고운바탕": ("Gowun Batang", 78),
     "검은고딕": ("Black Han Sans", 78),
-    "나눔명조": ("NanumMyeongjoExtraBold", 78),
+    "나눔명조": ("NanumMyeongjoExtraBold", 92),
     "원티드 산스": ("Wanted Sans ExtraBold", 76),
     "나눔스퀘어라운드": ("NanumSquareRound ExtraBold", 76),
     "고딕 A1": ("Gothic A1 ExtraBold", 74),
@@ -34,7 +34,7 @@ TITLE_FONTS = {
     "디필레이아": ("Diphylleia", 78),
     "나눔손글씨 펜": ("Nanum Pen", 96),
 }
-DEFAULT_TITLE_FONT = "프리텐다드"
+DEFAULT_TITLE_FONT = "나눔명조"
 SUB_FONT = "Pretendard Medium"
 LIST_FONT = "Pretendard SemiBold"
 
@@ -69,7 +69,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Title,{{TITLE_FONT}},{{TITLE_SIZE}},&H00FFFFFF,&H00FFFFFF,&H50000000,&H90000000,0,0,0,0,100,100,0,0,1,1.5,3,2,40,40,0,1
+Style: Title,{{TITLE_FONT}},{{TITLE_SIZE}},&H00FFFFFF,&H00FFFFFF,&H10707070,&H50383838,0,0,0,0,100,100,0,0,1,3,3,2,40,40,0,1
 Style: Caption,{SUB_FONT},44,&H00141414,&H00141414,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,9,0,5,40,40,0,1
 Style: Panel,Arial,20,&H70FFFFFF,&H70FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: Num,{LIST_FONT},58,&H00141414,&H00141414,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,4,0,0,0,1
@@ -93,7 +93,7 @@ def esc(text: str) -> str:
     return text.replace("\\", "＼").replace("{", "(").replace("}", ")").replace("\n", "\\N")
 
 
-def wrap_title(title: str, max_line: int = 17) -> str:
+def wrap_title(title: str, max_line: int = 14) -> str:
     """길면 가운데 가까운 띄어쓰기에서 두 줄로 나눈다. 사용자가 줄바꿈을 넣었으면 그대로 쓴다."""
     title = title.strip()
     if "\n" in title or len(title) <= max_line:
@@ -101,10 +101,24 @@ def wrap_title(title: str, max_line: int = 17) -> str:
     spaces = [i for i, ch in enumerate(title) if ch == " "]
     if not spaces:
         return title
-    # 레퍼런스 제목은 첫 줄이 조금 더 길다 ("연차 못 쓰게 하는 사장님들이 / 가장 많이 하는 말 TOP 5")
-    target = len(title) * 0.57
-    cut = min((i for i in spaces if i <= max_line) or spaces, key=lambda i: abs(i - target))
+    size = TITLE_FONTS[DEFAULT_TITLE_FONT][1]
+
+    def widths(i: int) -> tuple[float, float]:
+        return title_width(title[:i], size), title_width(title[i + 1:], size)
+
+    # 레퍼런스처럼 첫 줄이 더 길게 ("음식점, 근로계약서 망치는 / 작성 실수 TOP 5"),
+    # 그중 화면에 들어가면서 두 줄 길이가 가장 비슷한 곳에서 나눈다.
+    fits = [i for i in spaces if widths(i)[0] >= widths(i)[1] and widths(i)[0] <= TITLE_MAX_W]
+    if fits:
+        cut = min(fits, key=lambda i: widths(i)[0] - widths(i)[1])
+    else:  # 너무 길면 긴 줄이 가장 짧아지는 곳 (나중에 글자 크기를 줄인다)
+        cut = min(spaces, key=lambda i: max(widths(i)))
     return title[:cut] + "\n" + title[cut + 1:]
+
+
+def title_width(text: str, size: int) -> float:
+    """제목 한 줄의 대략적인 너비(px). 나눔명조로 재 보니 일반 추정치의 0.82배."""
+    return tierlist.text_width(text, size) * 0.82
 
 
 def rounded_rect(w: int, h: int, r: int) -> str:
@@ -116,6 +130,18 @@ def rounded_rect(w: int, h: int, r: int) -> str:
 
 def line(layer: int, start: float, end: float, style: str, text: str) -> str:
     return f"Dialogue: {layer},{ts(start)},{ts(end)},{style},,0,0,0,,{text}\n"
+
+
+TITLE_MAX_W = 1000  # 제목 한 줄이 이보다 넓으면 글자를 줄인다
+TITLE_BLUR = 4  # 회색 테두리·그림자를 부드럽게 번지게
+
+
+def title_tag(title: str, title_font: str) -> str:
+    """제목 위치 + 번짐. 한 줄이 화면보다 넓으면 글자 크기를 줄인다."""
+    size = TITLE_FONTS.get(title_font, TITLE_FONTS[DEFAULT_TITLE_FONT])[1]
+    widest = max(title_width(ln, size) for ln in title.split("\n"))
+    fit = f"\\fs{int(size * TITLE_MAX_W / widest)}" if widest > TITLE_MAX_W else ""
+    return f"{{\\an8\\pos({W // 2},{TITLE_TOP_Y})\\blur{TITLE_BLUR}{fit}}}"
 
 
 def header(title_font: str = DEFAULT_TITLE_FONT) -> str:
@@ -130,7 +156,8 @@ def build_ass(p: Project) -> str:
     show_list = p.list_style in ("rank", "ordinal") and count >= 2
 
     if p.title.strip():
-        out.append(line(3, 0, end, "Title", f"{{\\an8\\pos({W // 2},{TITLE_TOP_Y})}}" + esc(wrap_title(p.title))))
+        title = wrap_title(p.title)
+        out.append(line(3, 0, end, "Title", title_tag(title, p.title_font) + esc(title)))
 
     if show_list:
         (x0, y0, x1, y1), rows = panel_layout(count)
