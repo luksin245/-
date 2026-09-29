@@ -24,6 +24,7 @@ def run_batch(sources: list[str], folder: str, prefs: dict, on_progress: Progres
               ) -> list[tuple[str, str | None, str | None]]:
     """[(원본, 결과 파일 또는 None, 오류 메시지 또는 None)]. 하나가 실패해도 나머지는 계속 만든다."""
     report = on_progress or (lambda msg, frac: None)
+    Path(folder).mkdir(parents=True, exist_ok=True)
     results = []
     total = len(sources)
     for k, src in enumerate(sources):
