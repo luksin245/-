@@ -10,7 +10,7 @@ from . import face, quiz, stickers
 from .ass import build_ass
 from .cutter import FPS
 from .media import run_ffmpeg
-from .paths import fonts_dir
+from .paths import bgm_dir, fonts_dir
 from .project import Project
 
 
@@ -48,6 +48,10 @@ def build_filter(p: Project, face_graph: str, sticker_graph: str) -> str:
 def render(p: Project, output: str, on_progress: Callable[[float], None] | None = None) -> None:
     if not p.segments:
         raise RuntimeError("남길 구간이 없습니다. 목소리가 들리는 영상인지 확인해주세요.")
+    if p.bgm and not Path(p.bgm).exists():
+        # 다른 PC에서 저장한 편집 정보면 같은 이름의 BGM을 이 프로그램 폴더에서 찾고, 없으면 BGM 없이 만든다
+        local = bgm_dir() / Path(p.bgm).name
+        p.bgm = str(local) if local.exists() else None
     with tempfile.TemporaryDirectory(prefix="reels_") as tmp:
         work = Path(tmp)
         # subtitles 필터는 Windows 경로(C:\...)를 다루기 까다로워서, 작업 폴더 안의 상대 경로만 쓴다
