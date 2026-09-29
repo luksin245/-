@@ -61,13 +61,14 @@ jobs:
           D=dist/ReelsAuto
           mkdir -p $D/bin $D/assets $D/models
           cp "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" $D/bin/ffmpeg.exe
-          cp -r assets/fonts assets/bgm $D/assets/
+          cp -r assets/fonts assets/bgm assets/stickers assets/quiz $D/assets/
           cp -r models/whisper-small $D/models/
           cp README.md $D/사용법.txt
       - name: 만든 exe로 실제 테스트
         timeout-minutes: 20
         run: |
-          ./dist/ReelsAuto/ReelsAuto.exe "reference/퇴직금.mp4" -o "$PWD/테스트_결과.mp4"
+          # 퀴즈형 영상으로 테스트 (스티커·카드·O/X 그림까지 exe 안에서 제대로 쓰이는지 확인)
+          ./dist/ReelsAuto/ReelsAuto.exe reference/5.*.mp4 -o "$PWD/테스트_결과.mp4"
           ls -la 테스트_결과.mp4
           ./dist/ReelsAuto/bin/ffmpeg.exe -hide_banner -i 테스트_결과.mp4 2>&1 | grep -E "Duration|Stream" || true
       - name: 압축
