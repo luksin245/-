@@ -40,8 +40,8 @@ def transcribe(audio16k: np.ndarray, on_progress: Callable[[float], None] | None
     segments, _ = _get_model().transcribe(
         audio16k, language="ko", word_timestamps=True, beam_size=5,
         vad_filter=False, condition_on_previous_text=False,
+        # 용어 사전은 여기 한 번만 넣는다 (hotwords로도 넣으면 모델 입력 한도 448토큰을 넘어서 멈춘다)
         initial_prompt=(glossary() + ". " + PROMPT).lstrip(". "),
-        hotwords=glossary() or None,  # 용어 사전을 더 강하게 반영
     )
     words: list[Word] = []
     for seg in segments:

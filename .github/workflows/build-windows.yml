@@ -100,6 +100,8 @@ jobs:
           name: ReelsAuto-windows
           path: ReelsAuto-windows.zip
       - name: 다운로드 페이지(Release)에 올리기
+        # 저장소 설정에서 Actions 쓰기 권한이 꺼져 있으면 실패하지만, exe는 위 Artifact로 받을 수 있다
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.${{ github.run_number }}
