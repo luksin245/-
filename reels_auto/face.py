@@ -25,6 +25,8 @@ LEVELS = {
     "강하게": (12, 0.13, 0.9, 0.03, 1.06),
 }
 DEFAULT_LEVEL = "약하게"
+# 한 장짜리 이미지를 필요할 때마다 되풀이해 내보낸다 (입력 쪽 -loop 1 은 프레임을 미리 쌓아 메모리를 많이 씀)
+HOLD = "loop=loop=-1:size=1,setpts=N/30/TB"
 
 
 def _grab_gray(source: str, t: float) -> np.ndarray | None:
@@ -149,7 +151,8 @@ def build_graph(workdir: str, level: str, slim: str, box: list[int] | None, firs
             ix, iy = first_input + len(inputs), first_input + len(inputs) + 1
             inputs += ["slim_x.pgm", "slim_y.pgm"]
             parts.append(f"[{cur}]split=2[vsb][vsf];[vsf]crop={w}:{h}:{x}:{y},format=yuv444p[vsc];"
-                         f"[vsc][{ix}:v][{iy}:v]remap=fill=black[vsr];"
+                         f"[{ix}:v]{HOLD}[vmx];[{iy}:v]{HOLD}[vmy];"
+                         f"[vsc][vmx][vmy]remap=fill=black[vsr];"
                          f"[vsb][vsr]overlay={x}:{y}[vslim]")
             cur = "vslim"
         if params is not None:
@@ -159,7 +162,7 @@ def build_graph(workdir: str, level: str, slim: str, box: list[int] | None, firs
             inputs.append("face_mask.pgm")
             parts.append(f"[{cur}]split=2[vbb][vbf];"
                          f"[vbf]crop={w}:{h}:{x}:{y},bilateral=sigmaS={sigma_s}:sigmaR={sigma_r},format=yuva420p[vbs];"
-                         f"[{im}:v]format=gray[vmask];[vbs][vmask]alphamerge[vba];"
+                         f"[{im}:v]{HOLD},format=gray[vmask];[vbs][vmask]alphamerge[vba];"
                          f"[vbb][vba]overlay={x}:{y}:format=auto[vsmooth]")
             cur = "vsmooth"
     parts.append(f"[{cur}]null[vface]")

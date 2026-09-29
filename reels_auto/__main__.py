@@ -29,6 +29,7 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--bgm")
     ap.add_argument("--retouch", choices=["끄기", "약하게", "보통", "강하게"])
     ap.add_argument("--slim", choices=["끄기", "약하게", "보통", "강하게"])
+    ap.add_argument("--no-stickers", action="store_true")
     a = ap.parse_args(argv)
 
     def progress(msg: str, frac: float) -> None:
@@ -49,11 +50,13 @@ def cli(argv: list[str]) -> int:
         p.retouch = a.retouch
     if a.slim:
         p.slim = a.slim
+    if a.no_stickers:
+        p.stickers = []
     if a.dump:
         Path(a.dump).write_text(p.to_json(), encoding="utf-8")
     print(f"길이 {p.duration:.1f}초 · 컷 {len(p.segments)}개 · 자막 {len(p.captions)}줄 · 제목: {p.title}")
     print(f"얼굴 위치: {p.face_box} · 피부 보정: {p.retouch} · 얼굴형: {p.slim}")
-    print(f"목록: {p.list_style} {p.list_count}개")
+    print(f"목록: {p.list_style} {p.list_count}개 · 스티커: " + ", ".join(f"{x.name}@{x.start}" for x in p.stickers))
     for it in p.items:
         print(f"  {it.rank}. @{it.time}: {it.text}")
     if not a.no_render:

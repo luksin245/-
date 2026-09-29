@@ -7,6 +7,7 @@ from . import analyze, cutter
 from .media import load_audio
 from .paths import bgm_dir
 from .project import Project, Word
+from .stickers import auto_stickers
 
 Progress = Callable[[str, float], None]
 
@@ -37,17 +38,21 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
 
     face_box = detect_face_box(source, segments)
     style, count, items = analyze.detect_list(words)
+    captions = analyze.make_captions(words, duration)
+    # 목록이 있는 영상은 목록 패널과 겹치므로 스티커를 기본으로 끈다
+    picked = auto_stickers(captions, duration) if style == "none" else []
     report("완료", 1.0)
     return Project(
         source=source,
         segments=segments,
         duration=duration,
         words=words,
-        captions=analyze.make_captions(words, duration),
+        captions=captions,
         title=analyze.suggest_title(words, style, count),
         list_style=style,
         list_count=count,
         items=items,
         bgm=default_bgm(),
         face_box=face_box,
+        stickers=picked,
     )

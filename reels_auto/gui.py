@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .analyze import retime_captions
 from .analyze import MAX_ITEMS
+from .stickers import names as sticker_names
 from .face import DEFAULT_LEVEL, DEFAULT_SLIM, LEVELS, SLIM_LEVELS
 from .paths import bgm_dir
 from .project import Project
@@ -29,8 +30,8 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.busy = False
         root.title(f"릴스 자동 편집 v{__version__}")
-        root.geometry("1040x780")
-        root.minsize(900, 700)
+        root.geometry("1040x860")
+        root.minsize(900, 780)
         self._build()
         self._set_enabled(False)
         root.after(100, self._poll)
@@ -129,6 +130,12 @@ class App:
         self.sub_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
 
+        ttk.Label(right, text="그림 스티커 (한 줄에 '나타나는 시점(초) 이름' · 줄을 지우면 안 나와요)").pack(anchor="w", pady=(8, 0))
+        self.sticker_text = tk.Text(right, height=5, font=("Malgun Gothic", 11), wrap="none", undo=True)
+        self.sticker_text.pack(fill="x")
+        ttk.Label(right, text="쓸 수 있는 이름: " + ", ".join(sticker_names()), wraplength=500,
+                  foreground="#666").pack(anchor="w")
+
         bottom = ttk.Frame(self.root)
         bottom.pack(fill="x", **pad)
         self.render_btn = ttk.Button(bottom, text="③ 영상 만들기", command=self.start_render)
@@ -154,7 +161,7 @@ class App:
 
     def _set_enabled(self, on: bool) -> None:
         state = "normal" if on else "disabled"
-        for w in [self.title_text, self.sub_text, self.render_btn, *self.item_widgets]:
+        for w in [self.title_text, self.sub_text, self.sticker_text, self.render_btn, *self.item_widgets]:
             w.configure(state=state)
 
     def _style(self) -> str:
@@ -219,6 +226,8 @@ class App:
         self.retouch_var.set(p.retouch)
         self.slim_var.set(p.slim)
         self.face_note.configure(text="얼굴을 찾았어요" if p.face_box else "얼굴을 못 찾아서 밝기·혈색만 보정해요")
+        self.sticker_text.delete("1.0", "end")
+        self.sticker_text.insert("1.0", "\n".join(f"{x.start:.2f} {x.name}" for x in p.stickers))
         self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개")
 
     def _collect(self) -> Project:
@@ -245,7 +254,29 @@ class App:
         p.bgm_volume = float(self.vol_var.get())
         p.retouch = self.retouch_var.get()
         p.slim = self.slim_var.get()
+        p.stickers = self._read_stickers(p)
         return p
+
+    def _read_stickers(self, p: Project) -> list:
+        from .project import Sticker
+
+        known = {(round(x.start, 2), x.name): x for x in p.stickers}
+        valid = set(sticker_names())
+        out = []
+        for n, raw in enumerate(self.sticker_text.get("1.0", "end").splitlines(), start=1):
+            parts = raw.split()
+            if not parts:
+                continue
+            try:
+                start = float(parts[0])
+            except ValueError:
+                raise ValueError(f"스티커 {n}번째 줄: 앞에 시점(초)을 숫자로 적어주세요 (예: 3.5 달력)")
+            name = " ".join(parts[1:])
+            if name not in valid:
+                raise ValueError(f"스티커 {n}번째 줄: '{name}' 스티커가 없어요. 아래 목록의 이름을 써주세요.")
+            old = known.get((round(start, 2), name))
+            out.append(old or Sticker(start, min(start + 2.5, p.duration), name))
+        return out
 
     def start_render(self) -> None:
         if self.busy or self.project is None:

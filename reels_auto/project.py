@@ -27,6 +27,13 @@ class RankItem:
 
 
 @dataclass
+class Sticker:
+    start: float
+    end: float
+    name: str  # assets/stickers/<name>.png
+
+
+@dataclass
 class Project:
     source: str
     segments: list[tuple[float, float]]  # 원본 기준 남길 구간
@@ -42,6 +49,7 @@ class Project:
     face_box: list[int] | None = None  # 출력 화면 기준 얼굴 상자 [x, y, w, h]
     retouch: str = "약하게"  # 피부 보정: 끄기/약하게/보통/강하게
     slim: str = "약하게"  # 얼굴형 갸름하게: 끄기/약하게/보통/강하게
+    stickers: list[Sticker] = field(default_factory=list)  # 말에 맞춰 잠깐 튀어나오는 그림
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
@@ -53,6 +61,7 @@ class Project:
         d["words"] = [Word(**w) for w in d["words"]]
         d["captions"] = [Caption(**c) for c in d["captions"]]
         d["items"] = [RankItem(**i) for i in d["items"]]
+        d["stickers"] = [Sticker(**x) for x in d.get("stickers", [])]
         if "top_mode" in d:  # 예전 형식
             d["list_style"], d["list_count"] = ("rank", 5) if d.pop("top_mode") else ("none", 0)
         return cls(**d)

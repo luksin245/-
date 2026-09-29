@@ -35,8 +35,13 @@ def make_captions(words: list[Word], duration: float, max_chars: int = 12, max_g
             length = sum(len(x.text.strip().replace(" ", "")) for x in cur) + len(text)
             prev = cur[-1]
             # "돼", "보자" 같은 짧은 끝말이 혼자 한 줄이 되지 않도록 조금 넘쳐도 붙인다
-            too_long = length > max_chars and not (len(text) <= 2 and length <= max_chars + 3)
-            if too_long or re.search(r"[.?!,]$", prev.text.strip()) or w.start - prev.end > max_gap:
+            short_tail = len(text) <= 2 or (len(text) <= 4 and re.search(r"[.?!]$", text))
+            too_long = length > max_chars and not (short_tail and length <= max_chars + 5)
+            prev_text = prev.text.strip()
+            sentence_end = re.search(r"[.?!]$", prev_text)
+            # 쉼표는 줄이 어느 정도 찼을 때만 끊는다 ("문자, 카카오톡, 녹음" 같은 나열은 한 줄로)
+            comma_break = prev_text.endswith(",") and length - len(text) >= 8
+            if too_long or sentence_end or comma_break or w.start - prev.end > max_gap:
                 groups.append([w])
                 continue
             cur.append(w)
@@ -201,9 +206,11 @@ def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str
         return ""
     end = _sentence_end_after(words, 0, limit=8)
     text = _clean(" ".join(w.text.strip() for w in words[: end + 1])).rstrip("?!")
+    # "노무사님, …" 처럼 부르는 말로 시작하면 떼어낸다
+    text = re.sub(r"^\S*(님|씨|선생)[,!]?\s+", "", text)
     text = re.sub(r"\s*(TOP|탑)\s*[0-9].*$", "", text, flags=re.I)
     if style == "rank":
         text = re.sub(r"\s*(정리해\s*보자|알려\s*줄게|알려\s*드릴게요).*$", "", text)
-    if len(text) > 22:
-        text = text[:22].rsplit(" ", 1)[0]
+    if len(text) > 30:  # 두 줄(한 줄 17자 안팎)에 들어가게
+        text = text[:30].rsplit(" ", 1)[0]
     return f"{text} TOP {count}" if style == "rank" else text

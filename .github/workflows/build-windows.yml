@@ -25,13 +25,15 @@ jobs:
         run: python -c "from faster_whisper import download_model; download_model('small', output_dir='models/whisper-small')"
       - name: 레퍼런스 영상 분석
         run: |
-          for f in reference/근로계약서.mp4 "reference/직장 괴롭힘.mp4" reference/퇴직금.mp4 "reference/퇴사 챙길 돈.mp4"; do
+          for f in reference/근로계약서.mp4 "reference/직장 괴롭힘.mp4" reference/퇴직금.mp4 "reference/퇴사 챙길 돈.mp4" "reference/1. 알바 직장내괴롭힘.mp4" "reference/4. 퇴사연차 15개.mp4"; do
             echo "===== $f"
             python -m reels_auto "$f" --no-render --dump /tmp/p.json
             python -c "import json; p=json.load(open('/tmp/p.json')); print(' / '.join(c['text'] for c in p['captions']))"
           done
-      - name: 렌더링 한 번
-        run: python -m reels_auto reference/근로계약서.mp4 -o /tmp/out.mp4
+      - name: 렌더링 (목록형 / 질문·답변형)
+        run: |
+          python -m reels_auto reference/근로계약서.mp4 -o /tmp/out1.mp4
+          python -m reels_auto "reference/1. 알바 직장내괴롭힘.mp4" -o /tmp/out2.mp4
 
   build:
     name: Windows exe 만들기
