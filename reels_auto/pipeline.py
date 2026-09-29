@@ -9,7 +9,7 @@ from .paths import bgm_dir
 from .project import Project, Word
 from .hooks import classify as classify_hook
 from .quiz import detect_quiz
-from .retakes import remove_retakes
+from .retakes import remove_retakes, suspicious_segments
 from .tier import detect_tiers
 from .stickers import auto_stickers
 
@@ -31,8 +31,11 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
     segments = cutter.detect_speech(audio, 16000)
     duration = round(cutter.total_length(segments), 3)
 
+    transcribe_clip = None
     if words is None:
-        from .transcribe import transcribe
+        from .transcribe import transcribe, transcribe_text
+
+        transcribe_clip = transcribe_text
 
         report("음성 인식 준비 중 (처음엔 조금 걸려요)", 0.1)
         cut = cutter.cut_audio(audio, 16000, segments)
@@ -40,7 +43,12 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
 
     ng_removed: list[str] = []
     if remove_ng:
-        segments, words, removed = remove_retakes(segments, words)
+        overrides: dict[int, str] = {}
+        if transcribe_clip is not None:
+            for i in suspicious_segments(segments, words):
+                s, e = segments[i]
+                overrides[i] = transcribe_clip(audio[int(s * 16000): int(e * 16000)])
+        segments, words, removed = remove_retakes(segments, words, overrides)
         duration = round(cutter.total_length(segments), 3)
         ng_removed = [f"{r.start:.1f}초 · {r.reason} · {r.text}" for r in removed if r.text]
 

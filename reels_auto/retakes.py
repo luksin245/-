@@ -45,22 +45,53 @@ def _is_restart(a: str, b: str) -> bool:
     return SequenceMatcher(None, a, head).ratio() >= 0.75
 
 
-def remove_retakes(segments: list[tuple[float, float]], words: list[Word]
-                   ) -> tuple[list[tuple[float, float]], list[Word], list[Removed]]:
-    """(남길 조각들, 시간을 다시 맞춘 단어들, 버린 조각 목록).
-
-    words 는 잘린 영상(조각들을 이어 붙인) 기준 시간이다.
-    """
+def _offsets(segments: list[tuple[float, float]]) -> list[float]:
     offsets, t = [], 0.0
     for s, e in segments:
         offsets.append(t)
         t += e - s
+    return offsets
+
+
+def _split_words(segments: list[tuple[float, float]], words: list[Word]) -> list[list[Word]]:
+    offsets = _offsets(segments)
     by_seg: list[list[Word]] = [[] for _ in segments]
     for w in words:
         mid = (w.start + w.end) / 2
         k = max(0, min(len(segments) - 1, sum(1 for o in offsets if o <= mid) - 1))
         by_seg[k].append(w)
+    return by_seg
+
+
+def suspicious_segments(segments: list[tuple[float, float]], words: list[Word]) -> list[int]:
+    """소리는 있는데 받아 적힌 말이 거의 없는 조각.
+
+    같은 문장을 두 번 말하면 음성 인식이 한 번만 적는 경우가 많아서, NG 조각이 빈 글자로 남는다.
+    이런 조각은 따로 한 번 더 받아 적어서 다음 조각과 비교한다.
+    """
+    by_seg = _split_words(segments, words)
+    out = []
+    for i, ((s, e), ws) in enumerate(zip(segments, by_seg)):
+        dur = e - s
+        if dur >= 0.7 and len(ws) / dur < 1.2 and i + 1 < len(segments):
+            out.append(i)
+    return out
+
+
+def remove_retakes(segments: list[tuple[float, float]], words: list[Word],
+                   overrides: dict[int, str] | None = None
+                   ) -> tuple[list[tuple[float, float]], list[Word], list[Removed]]:
+    """(남길 조각들, 시간을 다시 맞춘 단어들, 버린 조각 목록).
+
+    words 는 잘린 영상(조각들을 이어 붙인) 기준 시간이다.
+    overrides 는 조각 하나만 따로 받아 적은 글자 (suspicious_segments 참고).
+    """
+    offsets = _offsets(segments)
+    by_seg = _split_words(segments, words)
     texts = [" ".join(w.text.strip() for w in ws) for ws in by_seg]
+    for i, text in (overrides or {}).items():
+        if text and len(_norm(text)) > len(_norm(texts[i])):
+            texts[i] = text
     norms = [_norm(x) for x in texts]
 
     drop: dict[int, str] = {}
@@ -82,6 +113,14 @@ def remove_retakes(segments: list[tuple[float, float]], words: list[Word]
             if _is_restart(a, norms[j]):
                 drop[i] = "다시 말함"
                 break
+
+    # 음성 인식이 다시 말한 문장을 NG 조각 시간에 붙여 적었으면(다음 조각은 비어 있음) 단어를 다음 조각으로 옮긴다
+    for i, reason in list(drop.items()):
+        j = i + 1
+        if reason == "다시 말함" and j < len(segments) and j not in drop and not by_seg[j] and by_seg[i]:
+            shift = offsets[j] - offsets[i]
+            by_seg[j] = [Word(w.start + shift, w.end + shift, w.text) for w in by_seg[i]]
+            by_seg[i] = []
 
     kept_segments: list[tuple[float, float]] = []
     new_words: list[Word] = []

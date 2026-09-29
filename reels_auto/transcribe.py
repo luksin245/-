@@ -51,3 +51,12 @@ def transcribe(audio16k: np.ndarray, on_progress: Callable[[float], None] | None
         if on_progress and duration:
             on_progress(min(1.0, seg.end / duration))
     return words
+
+
+def transcribe_text(audio16k: np.ndarray) -> str:
+    """짧은 조각 하나만 따로 받아 적기 (NG 확인용). 앞뒤 문맥 없이 적어서, 같은 말을 두 번 해도 둘 다 나온다."""
+    if len(audio16k) < 1600:
+        return ""
+    segments, _ = _get_model().transcribe(audio16k, language="ko", beam_size=5, vad_filter=False,
+                                          condition_on_previous_text=False, initial_prompt=glossary() or None)
+    return " ".join(seg.text.strip() for seg in segments).strip()
