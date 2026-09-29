@@ -57,6 +57,7 @@ class Project:
     words: list[Word] = field(default_factory=list)
     captions: list[Caption] = field(default_factory=list)
     title: str = ""
+    title_font: str = "프리텐다드"  # 제목 글꼴 (ass.TITLE_FONTS 의 이름)
     list_style: str = "none"  # "rank"(TOP N, 아래부터) / "ordinal"(N가지, 위부터) / "quiz"(O/X 퀴즈) / "tier"(티어리스트) / "none"
     list_count: int = 0  # 목록 줄 수 (2~7)
     items: list[RankItem] = field(default_factory=list)  # rank = 목록의 몇 번째 줄인지 (1이 맨 위)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 def cli(argv: list[str]) -> int:
+    from .ass import TITLE_FONTS
     from .pipeline import analyze_video
     from .project import Project, Word
     from .render import render
@@ -30,6 +31,7 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--retouch", choices=["끄기", "약하게", "보통", "강하게"])
     ap.add_argument("--slim", choices=["끄기", "약하게", "보통", "강하게"])
     ap.add_argument("--no-stickers", action="store_true")
+    ap.add_argument("--title-font", choices=list(TITLE_FONTS), help="제목 글꼴")
     ap.add_argument("--keep-ng", action="store_true", help="다시 말한 부분(NG)을 빼지 않음")
     a = ap.parse_args(argv)
 
@@ -53,6 +55,8 @@ def cli(argv: list[str]) -> int:
         p.slim = a.slim
     if a.no_stickers:
         p.stickers = []
+    if a.title_font:
+        p.title_font = a.title_font
     if a.dump:
         Path(a.dump).write_text(p.to_json(), encoding="utf-8")
     print(f"길이 {p.duration:.1f}초 · 컷 {len(p.segments)}개 · 자막 {len(p.captions)}줄 · 제목: {p.title}")

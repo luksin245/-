@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .analyze import retime_captions
 from .analyze import MAX_ITEMS
+from .ass import DEFAULT_TITLE_FONT, TITLE_FONTS
 from .stickers import names as sticker_names
 from .face import DEFAULT_LEVEL, DEFAULT_SLIM, LEVELS, SLIM_LEVELS
 from .paths import bgm_dir
@@ -66,7 +67,12 @@ class App:
 
         ttk.Label(left, text="제목 (엔터로 줄바꿈)").pack(anchor="w")
         self.title_text = tk.Text(left, height=2, width=44, font=("Malgun Gothic", 12))
-        self.title_text.pack(anchor="w", pady=(0, 8))
+        self.title_text.pack(anchor="w")
+        tf = ttk.Frame(left)
+        tf.pack(anchor="w", pady=(2, 8))
+        ttk.Label(tf, text="제목 글꼴").pack(side="left")
+        self.title_font_var = tk.StringVar(value=DEFAULT_TITLE_FONT)
+        ttk.Combobox(tf, textvariable=self.title_font_var, values=list(TITLE_FONTS), state="readonly", width=12).pack(side="left", padx=6)
 
         fmt = ttk.Frame(left)
         fmt.pack(anchor="w")
@@ -222,6 +228,7 @@ class App:
         self._set_enabled(True)
         self.title_text.delete("1.0", "end")
         self.title_text.insert("1.0", p.title)
+        self.title_font_var.set(p.title_font if p.title_font in TITLE_FONTS else DEFAULT_TITLE_FONT)
         self.style_var.set(STYLE_LABELS.get(p.list_style, STYLE_LABELS["none"]))
         self.count_var.set(p.list_count if p.list_count >= 2 else 5)
         by_slot = {it.rank: it for it in p.items}
@@ -273,6 +280,7 @@ class App:
         choice = self.bgm_var.get()
         p.bgm = self.bgm_paths.get(choice) if choice not in (NO_BGM, PICK_BGM) else None
         p.bgm_volume = float(self.vol_var.get())
+        p.title_font = self.title_font_var.get()
         p.retouch = self.retouch_var.get()
         p.slim = self.slim_var.get()
         p.stickers = self._read_stickers(p)

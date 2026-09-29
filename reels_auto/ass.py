@@ -9,7 +9,16 @@ from .project import Project
 
 W, H = 1080, 1920
 
-TITLE_FONT = "NanumMyeongjoExtraBold"
+# 제목 글꼴: 화면에 보이는 이름 → (글꼴 이름, 크기). 굵기·모양이 달라 보기 좋은 크기가 조금씩 다르다.
+TITLE_FONTS = {
+    "프리텐다드": ("Pretendard ExtraBold", 76),
+    "수트": ("SUIT ExtraBold", 76),
+    "노토 세리프": ("Noto Serif KR Black", 74),
+    "고운바탕": ("Gowun Batang", 78),
+    "검은고딕": ("Black Han Sans", 78),
+    "나눔명조": ("NanumMyeongjoExtraBold", 78),
+}
+DEFAULT_TITLE_FONT = "프리텐다드"
 SUB_FONT = "Pretendard Medium"
 LIST_FONT = "Pretendard SemiBold"
 
@@ -31,6 +40,8 @@ def panel_layout(count: int) -> tuple[tuple[int, int, int, int], list[int]]:
 
 
 NUM_X, ITEM_X = 110, 178
+ITEM_SIZE = 46  # 목록 글자 크기
+ITEM_FIT = 16  # 이 글자 수보다 길면 패널 안에 들어가게 줄인다
 CAPTION_Y = 1500
 
 HEADER = f"""[Script Info]
@@ -42,7 +53,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Title,{TITLE_FONT},78,&H00FFFFFF,&H00FFFFFF,&H50000000,&H90000000,0,0,0,0,100,100,0,0,1,1.5,3,2,40,40,0,1
+Style: Title,{{TITLE_FONT}},{{TITLE_SIZE}},&H00FFFFFF,&H00FFFFFF,&H50000000,&H90000000,0,0,0,0,100,100,0,0,1,1.5,3,2,40,40,0,1
 Style: Caption,{SUB_FONT},44,&H00141414,&H00141414,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,9,0,5,40,40,0,1
 Style: Panel,Arial,20,&H70FFFFFF,&H70FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: Num,{LIST_FONT},58,&H00141414,&H00141414,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,4,0,0,0,1
@@ -91,8 +102,13 @@ def line(layer: int, start: float, end: float, style: str, text: str) -> str:
     return f"Dialogue: {layer},{ts(start)},{ts(end)},{style},,0,0,0,,{text}\n"
 
 
+def header(title_font: str = DEFAULT_TITLE_FONT) -> str:
+    name, size = TITLE_FONTS.get(title_font, TITLE_FONTS[DEFAULT_TITLE_FONT])
+    return HEADER.replace("{TITLE_FONT}", name).replace("{TITLE_SIZE}", str(size))
+
+
 def build_ass(p: Project) -> str:
-    out = [HEADER]
+    out = [header(p.title_font)]
     end = p.duration
     count = min(max(p.list_count, 0), 7)
     show_list = p.list_style in ("rank", "ordinal") and count >= 2
@@ -110,7 +126,7 @@ def build_ass(p: Project) -> str:
             if it.time is None or not text or not 1 <= it.rank <= count:
                 continue
             y = rows[it.rank - 1]
-            size = 30 if len(text) <= 22 else max(20, int(30 * 22 / len(text)))
+            size = ITEM_SIZE if len(text) <= ITEM_FIT else max(30, int(ITEM_SIZE * ITEM_FIT / len(text)))
             tag = f"{{\\pos({ITEM_X},{y})\\fs{size}}}"
             # 타이핑 효과: 글자가 하나씩 나타남
             step = min(0.06, 0.45 / len(text))
