@@ -6,13 +6,23 @@ from typing import Callable
 
 import numpy as np
 
-from .paths import whisper_model
+from .paths import app_dir, whisper_model
 from .project import Word
 
 _model = None
 
 # 순위를 "오위" 대신 "5위"로, 순서를 "첫 번째"처럼 적도록 유도하는 힌트 문장
-PROMPT = "3위는? 2위는? 마지막 1위는? 첫 번째, 두 번째, 세 번째."
+PROMPT = "3위는? 2위는? 마지막 1위는? 첫 번째, 두 번째, 세 번째. S티어, A티어."
+
+
+def glossary() -> str:
+    """assets/words.txt 의 전문 용어 (음성 인식 힌트)."""
+    path = app_dir() / "assets" / "words.txt"
+    if not path.exists():
+        return ""
+    words = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.startswith("#")]
+    return ", ".join(words)
 
 
 def _get_model():
@@ -29,7 +39,8 @@ def transcribe(audio16k: np.ndarray, on_progress: Callable[[float], None] | None
     duration = len(audio16k) / 16000
     segments, _ = _get_model().transcribe(
         audio16k, language="ko", word_timestamps=True, beam_size=5,
-        vad_filter=False, condition_on_previous_text=False, initial_prompt=PROMPT,
+        vad_filter=False, condition_on_previous_text=False,
+        initial_prompt=(glossary() + ". " + PROMPT).lstrip(". "),
     )
     words: list[Word] = []
     for seg in segments:

@@ -62,7 +62,7 @@ jobs:
           D=dist/ReelsAuto
           mkdir -p $D/bin $D/assets $D/models
           cp "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" $D/bin/ffmpeg.exe
-          cp -r assets/fonts assets/bgm assets/stickers assets/quiz $D/assets/
+          cp -r assets/fonts assets/bgm assets/stickers assets/quiz assets/words.txt $D/assets/
           cp -r models/whisper-small $D/models/
           cp README.md $D/사용법.txt
       - name: 만든 exe로 실제 테스트

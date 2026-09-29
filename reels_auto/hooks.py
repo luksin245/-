@@ -23,7 +23,7 @@ def classify(words: list[Word], list_style: str = "none") -> str:
     first = re.split(r"(?<=[.?!])\s", head, maxsplit=1)[0]
     if re.search(r"(님|선생님)\s*[,]?", first) and "?" in head[:120]:
         return TYPES["ask_expert"]
-    if re.search(r"(TOP|탑)\s*\d|1위는", head, re.I):
+    if re.search(r"(TOP|탑)\s*\d|1위는", head, re.I) or re.search(r"([0-9]|두|세|네|다섯)\s*가지", first):
         return TYPES["top"]
     if re.search(r"받아\s*적어|해당\s*되면|해당하면", head):
         return TYPES["note_this"]

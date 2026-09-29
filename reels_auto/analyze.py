@@ -142,7 +142,10 @@ def _item_at(words: list[Word], k: int, slot: int, hint_check: bool) -> RankItem
         picked.append(w.text.strip())
         if re.search(r"[,.?!]$", picked[-1]):  # 쉼표에서도 끊는다
             break
-    return RankItem(slot, round(words[k].start, 2), _clean(" ".join(picked))[:16])
+    text = _clean(" ".join(picked))
+    if len(text) > 18:  # 너무 길면 단어 단위로 자른다
+        text = text[:18].rsplit(" ", 1)[0]
+    return RankItem(slot, round(words[k].start, 2), text)
 
 
 def _rank_list(words: list[Word], expected: int | None) -> tuple[int, list[RankItem]] | None:
@@ -210,6 +213,12 @@ def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str
     # "노무사님, …" 처럼 부르는 말로 시작하면 떼어낸다
     text = re.sub(r"^\S*(님|씨|선생)[,!]?\s+", "", text)
     text = re.sub(r"\s*(TOP|탑)\s*[0-9].*$", "", text, flags=re.I)
+    if style == "tier" and "티어" not in text.replace("티어리스트", "티어"):
+        return "티어리스트"
+    if style == "tier" and not text.endswith(("티어리스트", "탄")) and "티어리스트" not in text:
+        return "티어리스트"
+    if style == "quiz" and "퀴즈" not in text:  # 인트로 없이 바로 문제로 시작하는 퀴즈
+        return "O/X 퀴즈"
     if "퀴즈" in text:  # "일상 근로 상식 퀴즈 풀어보자" → "일상 근로 상식 퀴즈"
         text = text[: text.index("퀴즈") + 2]
     if style == "rank":

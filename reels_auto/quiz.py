@@ -17,11 +17,18 @@ CARD_CENTER = (540, 1258)  # 레퍼런스에서 잰 카드 중심
 MARK_SIZE = 220
 IMAGE_SIZE = 230  # 카드 안 스티커 크기
 
-QUESTION_END = re.compile(r"다\?$")  # "없다?", "된다?", "있다?", "무효이다?"
+QUESTION_END = re.compile(r"다[?.]?$")  # "없다?", "된다?", "있다?", "무효이다" (음성 인식이 ?를 빠뜨려도)
 SENTENCE_END = re.compile(r"[.?!]$")
-SAY_O = re.compile(r"^(O|오|맞아|맞습니다|맞아요|정답|응|네|그렇지|그래)[.,!?]*$", re.I)
+# 설명은 반말("~어/~야/~해")이라 "~다"로 끝나는 말은 거의 퀴즈 문제 문장이다
+STATEMENT_END = re.compile(r"(있|없|된|한|이|였|았|었|않는|는)다[?.]?$")
+# 반말 설명 문장 끝 ("해당돼", "지급해야 해", "받을 수 있어", "중요해") — 음성 인식이 마침표를 빠뜨려도 끊기 위해
+CASUAL_END = re.compile(r"(어|해|돼|거야|이야|니야)[.!,]?$")
+NOT_END = {"위해", "대해", "통해", "인해", "의해"}
+# "O"는 음성 인식이 "오", "꼭"으로 적기도 한다
+SAY_O = re.compile(r"^(O|오|꼭|맞아|맞습니다|맞아요|정답|응|네|그렇지|그래)[.,!?]*$", re.I)
 SAY_X = re.compile(r"^(X|엑스|아니|아니야|아니요|아뇨|틀려|틀렸어|땡)[.,!?]*$", re.I)
-NEGATIVE = re.compile(r"안 |않|없|못|아니|무효|불가")
+# "지체 없이" 같은 부사는 부정이 아니므로 "없어/없다/없는/없고/없지/없으"만 본다
+NEGATIVE = re.compile(r"안 |않|없[어다는고지으]|못 |못받|아니|무효|불가")
 
 
 def quiz_dir() -> Path:
@@ -32,7 +39,9 @@ def _sentences(words: list[Word]) -> list[tuple[int, int]]:
     """(시작 단어, 끝 단어) 문장 목록."""
     out, start = [], 0
     for i, w in enumerate(words):
-        if SENTENCE_END.search(w.text.strip()) or i == len(words) - 1:
+        t = w.text.strip()
+        casual = CASUAL_END.search(t) and t.strip(".,!") not in NOT_END
+        if SENTENCE_END.search(t) or STATEMENT_END.search(t) or casual or i == len(words) - 1:
             out.append((start, i))
             start = i + 1
     return out
@@ -70,12 +79,15 @@ def detect_quiz(words: list[Word], duration: float) -> list[QuizItem]:
         if k + 1 >= len(sents):
             continue
         ra, rb = sents[k + 1]
+        nxt_q = sents[questions[n + 1]][0] if n + 1 < len(questions) else len(words)
+        rb2 = sents[min(k + 2, len(sents) - 1)][1]
+        rb2 = min(rb2, nxt_q - 1) if rb2 >= ra else rb
         start = words[a].start
         reveal = words[ra].start
         end = words[sents[questions[n + 1]][0]].start - 0.05 if n + 1 < len(questions) else duration
         image = match(question, picture_table) or "물음표"
         items.append(QuizItem(round(start, 2), round(reveal, 2), round(end, 2),
-                              _guess_answer(question, words, ra, rb), image))
+                              _guess_answer(question, words, ra, max(rb, rb2)), image))
     return items
 
 
