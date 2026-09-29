@@ -30,6 +30,14 @@ jobs:
             python -m reels_auto "$f" --no-render --dump /tmp/p.json
             python -c "import json; p=json.load(open('/tmp/p.json')); print(' / '.join(c['text'] for c in p['captions']))"
           done
+      - name: 원본 흉내 영상으로 무음 컷 + NG 제거 확인
+        run: |
+          for name in 근로계약서 "알바 직장내괴롭힘"; do
+            src="$(python tools/find_ref.py "$name")"
+            echo "===== $src"
+            python tools/make_fake_raw.py "$src" /tmp/raw.mp4 3
+            python -m reels_auto /tmp/raw.mp4 --no-render --dump /tmp/raw.json
+          done
       - name: 렌더링 (목록형 / 질문·답변형 / 퀴즈형 / 티어리스트)
         run: |
           python -m reels_auto reference/근로계약서.mp4 -o /tmp/out1.mp4

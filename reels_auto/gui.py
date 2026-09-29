@@ -50,6 +50,8 @@ class App:
         prog.pack(fill="x", **pad)
         self.analyze_btn = ttk.Button(prog, text="② 자동 분석", command=self.start_analyze, state="disabled")
         self.analyze_btn.pack(side="left")
+        self.ng_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(prog, text="NG(다시 말한 부분) 자동 제거", variable=self.ng_var).pack(side="left", padx=(8, 0))
         self.progress = ttk.Progressbar(prog, maximum=1.0)
         self.progress.pack(side="left", fill="x", expand=True, padx=10)
         self.status = ttk.Label(prog, text="", width=46)
@@ -213,7 +215,7 @@ class App:
     def _analyze_job(self, source: str) -> None:
         from .pipeline import analyze_video
 
-        p = analyze_video(source, lambda m, f: self.events.put(("progress", m, f)))
+        p = analyze_video(source, lambda m, f: self.events.put(("progress", m, f)), remove_ng=self.ng_var.get())
         self.events.put(("analyzed", p))
 
     def _fill_form(self, p: Project) -> None:
@@ -244,7 +246,8 @@ class App:
         self.quiz_text.insert("1.0", "\n".join(f"{q.start:.2f} {q.reveal:.2f} {q.answer} {q.image}" for q in p.quiz))
         self.sticker_text.delete("1.0", "end")
         self.sticker_text.insert("1.0", "\n".join(f"{x.start:.2f} {x.name}" for x in p.stickers))
-        self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개 · 도입부: {p.hook_type or '-'}")
+        ng = f" · NG {len(p.ng_removed)}곳 제거" if p.ng_removed else ""
+        self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개{ng} · 도입부: {p.hook_type or '-'}")
         # 퀴즈·티어 영상이면 해당 편집 탭을 바로 보여준다
         self.tabs.select({"quiz": 1, "tier": 2}.get(p.list_style, 0))
 

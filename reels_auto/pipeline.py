@@ -9,6 +9,7 @@ from .paths import bgm_dir
 from .project import Project, Word
 from .hooks import classify as classify_hook
 from .quiz import detect_quiz
+from .retakes import remove_retakes
 from .tier import detect_tiers
 from .stickers import auto_stickers
 
@@ -20,8 +21,9 @@ def default_bgm() -> str | None:
     return str(files[0]) if files else None
 
 
-def analyze_video(source: str, on_progress: Progress | None = None, words: list[Word] | None = None) -> Project:
-    """words를 주면 음성 인식을 건너뛴다 (테스트용)."""
+def analyze_video(source: str, on_progress: Progress | None = None, words: list[Word] | None = None,
+                  remove_ng: bool = True) -> Project:
+    """words를 주면 음성 인식을 건너뛴다 (테스트용). remove_ng면 다시 말한 부분(NG)을 자동으로 뺀다."""
     report = on_progress or (lambda msg, frac: None)
     report("소리 읽는 중", 0.0)
     audio = load_audio(source)
@@ -35,6 +37,12 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         report("음성 인식 준비 중 (처음엔 조금 걸려요)", 0.1)
         cut = cutter.cut_audio(audio, 16000, segments)
         words = transcribe(cut, lambda f: report("음성 인식 중", 0.1 + 0.85 * f))
+
+    ng_removed: list[str] = []
+    if remove_ng:
+        segments, words, removed = remove_retakes(segments, words)
+        duration = round(cutter.total_length(segments), 3)
+        ng_removed = [f"{r.start:.1f}초 · {r.reason} · {r.text}" for r in removed if r.text]
 
     report("얼굴 위치 찾는 중", 0.97)
     from .face import detect_face_box
@@ -67,4 +75,5 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         quiz=quiz_items,
         tiers=tier_items,
         hook_type=classify_hook(words, style),
+        ng_removed=ng_removed,
     )

@@ -69,6 +69,7 @@ class Project:
     quiz: list[QuizItem] = field(default_factory=list)  # 퀴즈형일 때 문제별 카드와 정답
     tiers: list[TierItem] = field(default_factory=list)  # 티어리스트형일 때 등급별 항목
     hook_type: str = ""  # 도입부 후킹 유형 (docs/hook-patterns.md)
+    ng_removed: list[str] = field(default_factory=list)  # 자동으로 뺀 NG 조각 설명 (원본 시점 · 이유 · 말)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
