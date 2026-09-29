@@ -7,7 +7,9 @@ from . import analyze, cutter
 from .media import load_audio
 from .paths import bgm_dir
 from .project import Project, Word
+from .hooks import classify as classify_hook
 from .quiz import detect_quiz
+from .tier import detect_tiers
 from .stickers import auto_stickers
 
 Progress = Callable[[str, float], None]
@@ -42,6 +44,9 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
     quiz_items = detect_quiz(words, duration) if style == "none" else []
     if quiz_items:
         style, count = "quiz", 0
+    tier_items = detect_tiers(words) if style == "none" else []
+    if tier_items:
+        style, count = "tier", 0
     captions = analyze.make_captions(words, duration)
     # 목록이 있는 영상은 목록 패널과 겹치므로 스티커를 기본으로 끈다
     picked = auto_stickers(captions, duration) if style == "none" else []
@@ -60,4 +65,6 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         face_box=face_box,
         stickers=picked,
         quiz=quiz_items,
+        tiers=tier_items,
+        hook_type=classify_hook(words, style),
     )

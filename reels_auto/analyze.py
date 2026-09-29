@@ -12,7 +12,8 @@ NATIVE_NUM = {"한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6, 
 RANK_DIGIT = re.compile(r"(?<![0-9])([1-7])\s*위")
 RANK_KOREAN = re.compile(r"^(일|이|삼|사|오|육|칠)위")
 # "첫 번째", "두번째", "셋째", "2번째" …
-ORDINAL = re.compile(r"^(?:(첫|두|세|네|다섯|여섯|일곱)\s*번\s*째|(첫|둘|셋|넷|다섯|여섯|일곱)째|([1-7])\s*번\s*째)")
+# "1번은", "2번은요?", "3번째", 그리고 "1." 처럼 번호만 말한 경우
+ORDINAL = re.compile(r"^(?:(첫|두|세|네|다섯|여섯|일곱)\s*번\s*째|(첫|둘|셋|넷|다섯|여섯|일곱)째|([1-7])\s*번\s*(?:째|은|는|이|으로)|([1-7])\.$)")
 ORDINAL_NUM = {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4, "다섯": 5, "여섯": 6, "일곱": 7}
 # 첫 문장에서 개수 찾기: "TOP 3", "탑 5", "3가지", "세 가지"
 COUNT_TOP = re.compile(r"(?:TOP|탑)\s*([2-7])", re.I)
@@ -95,7 +96,7 @@ def _ordinal_of(words: list[Word], i: int) -> tuple[int, int] | None:
         m = ORDINAL.match(text)
         if m:
             key = m.group(1) or m.group(2)
-            return (ORDINAL_NUM[key] if key else int(m.group(3))), i + span - 1
+            return (ORDINAL_NUM[key] if key else int(m.group(3) or m.group(4))), i + span - 1
     return None
 
 
@@ -215,4 +216,6 @@ def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str
         text = re.sub(r"\s*(정리해\s*보자|알려\s*줄게|알려\s*드릴게요).*$", "", text)
     if len(text) > 30:  # 두 줄(한 줄 17자 안팎)에 들어가게
         text = text[:30].rsplit(" ", 1)[0]
-    return f"{text} TOP {count}" if style == "rank" else text
+    # "…이유 5가지"처럼 개수를 이미 말한 제목에는 TOP N을 붙이지 않는다
+    has_count = re.search(r"([0-9]+|두|세|네|다섯|여섯|일곱)\s*가지", text)
+    return f"{text} TOP {count}" if style == "rank" and not has_count else text

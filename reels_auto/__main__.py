@@ -55,8 +55,11 @@ def cli(argv: list[str]) -> int:
     if a.dump:
         Path(a.dump).write_text(p.to_json(), encoding="utf-8")
     print(f"길이 {p.duration:.1f}초 · 컷 {len(p.segments)}개 · 자막 {len(p.captions)}줄 · 제목: {p.title}")
+    print(f"도입부 유형: {p.hook_type}")
     print(f"얼굴 위치: {p.face_box} · 피부 보정: {p.retouch} · 얼굴형: {p.slim}")
     print(f"목록: {p.list_style} {p.list_count}개 · 스티커: " + ", ".join(f"{x.name}@{x.start}" for x in p.stickers))
+    for t in p.tiers:
+        print(f"  {t.tier}티어 @{t.time}: {t.text}")
     for q in p.quiz:
         print(f"  퀴즈 {q.start}~{q.end} 정답 {q.answer} @{q.reveal} 그림 {q.image}")
     for it in p.items:

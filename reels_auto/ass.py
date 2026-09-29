@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from . import tier as tierlist
 from .project import Project
 
 W, H = 1080, 1920
@@ -45,6 +46,7 @@ Style: Title,{TITLE_FONT},78,&H00FFFFFF,&H00FFFFFF,&H50000000,&H90000000,0,0,0,0
 Style: Caption,{SUB_FONT},44,&H00141414,&H00141414,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,9,0,5,40,40,0,1
 Style: Panel,Arial,20,&H70FFFFFF,&H70FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: Num,{LIST_FONT},58,&H00141414,&H00141414,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,4,0,0,0,1
+Style: TierLetter,{LIST_FONT},50,&H00202020,&H00202020,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 Style: Item,{LIST_FONT},30,&H00141414,&H00141414,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,4,0,0,0,1
 
 [Events]
@@ -120,8 +122,57 @@ def build_ass(p: Project) -> str:
                 out.append(line(1, t, min(t_next, end), "Item", tag + esc(text[:k])))
                 t = t_next
 
+    if p.list_style == "tier":
+        out += tier_lines(p, end)
+
     y = CAPTION_Y
     for c in p.captions:
         if c.text.strip() and c.end > c.start:
             out.append(line(2, c.start, min(c.end, end), "Caption", f"{{\\an5\\pos({W // 2},{y})}}" + esc(c.text)))
     return "".join(out)
+
+
+def _ass_color(rgb: tuple[int, int, int], alpha: int = 0) -> str:
+    r, g, b = rgb
+    return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}&"
+
+
+def _typing(layer: int, start: float, end: float, tag: str, text: str) -> list[str]:
+    out = []
+    step = min(0.06, 0.45 / max(1, len(text)))
+    t = max(0.0, start)
+    for k in range(1, len(text) + 1):
+        t_next = t + step if k < len(text) else end
+        if t >= end:
+            break
+        out.append(line(layer, t, min(t_next, end), "Item", tag + esc(text[:k])))
+        t = t_next
+    return out
+
+
+def tier_lines(p: Project, end: float) -> list[str]:
+    """티어리스트: 왼쪽 색 칸(S/A/B/C) + 오른쪽 반투명 영역에 항목이 옆으로 붙는다."""
+    out = []
+    top, bottom = tierlist.ROWS["S"][0], tierlist.ROWS["C"][1]
+    x0, x1 = tierlist.LABEL_X1, tierlist.AREA_X1
+    out.append(line(0, 0, end, "Panel", f"{{\\an7\\pos({x0},{top})\\p1}}m 0 0 l {x1 - x0} 0 {x1 - x0} {bottom - top} 0 {bottom - top}"))
+    for name, (y0, y1) in tierlist.ROWS.items():
+        w, h = tierlist.LABEL_X1 - tierlist.LABEL_X0, y1 - y0
+        color = _ass_color(tierlist.COLORS[name])
+        out.append(line(1, 0, end, "Panel", f"{{\\an7\\pos({tierlist.LABEL_X0},{y0})\\1c{color}\\1a&H00&\\p1}}m 0 0 l {w} 0 {w} {h} 0 {h}"))
+        out.append(line(2, 0, end, "TierLetter", f"{{\\pos({(tierlist.LABEL_X0 + tierlist.LABEL_X1) // 2},{(y0 + y1) // 2})}}{name}"))
+    cursor = {name: tierlist.ITEM_X0 for name in tierlist.TIERS}
+    for it in sorted(p.tiers, key=lambda x: x.time):
+        text = it.text.strip()
+        if it.tier not in tierlist.ROWS or not text:
+            continue
+        size = 26
+        width = tierlist.text_width(text, size)
+        x = cursor[it.tier]
+        if x + width > tierlist.AREA_X1 - 10:  # 줄이 꽉 차면 글자를 줄여서라도 넣는다
+            size = max(18, int(size * (tierlist.AREA_X1 - 10 - x) / width))
+            width = tierlist.text_width(text, size)
+        y = sum(tierlist.ROWS[it.tier]) // 2
+        out += _typing(2, it.time, end, f"{{\\an4\\pos({int(x)},{y})\\fs{size}}}", text)
+        cursor[it.tier] = x + width + tierlist.ITEM_GAP
+    return out

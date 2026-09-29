@@ -20,7 +20,7 @@ from .project import Project
 
 NO_BGM = "(BGM 없음)"
 STYLE_LABELS = {"none": "표시 안 함", "rank": "순위형 (TOP N · 아래부터)", "ordinal": "나열형 (N가지 · 위부터)",
-                "quiz": "퀴즈형 (O/X 카드)"}
+                "quiz": "퀴즈형 (O/X 카드)", "tier": "티어리스트 (S/A/B/C)"}
 PICK_BGM = "직접 고르기..."
 
 
@@ -31,8 +31,8 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.busy = False
         root.title(f"릴스 자동 편집 v{__version__}")
-        root.geometry("1040x940")
-        root.minsize(900, 860)
+        root.geometry("1040x820")
+        root.minsize(900, 700)
         self._build()
         self._set_enabled(False)
         root.after(100, self._poll)
@@ -52,7 +52,7 @@ class App:
         self.analyze_btn.pack(side="left")
         self.progress = ttk.Progressbar(prog, maximum=1.0)
         self.progress.pack(side="left", fill="x", expand=True, padx=10)
-        self.status = ttk.Label(prog, text="", width=34)
+        self.status = ttk.Label(prog, text="", width=46)
         self.status.pack(side="left")
 
         body = ttk.Frame(self.root)
@@ -131,15 +131,14 @@ class App:
         self.sub_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
 
-        ttk.Label(right, text="그림 스티커 (한 줄에 '나타나는 시점(초) 이름' · 줄을 지우면 안 나와요)").pack(anchor="w", pady=(8, 0))
-        self.sticker_text = tk.Text(right, height=5, font=("Malgun Gothic", 11), wrap="none", undo=True)
-        self.sticker_text.pack(fill="x")
-        ttk.Label(right, text="퀴즈 카드 (한 줄에 '문제 시작 · 정답 공개(초) · O/X · 그림')").pack(anchor="w", pady=(8, 0))
-        self.quiz_text = tk.Text(right, height=4, font=("Malgun Gothic", 11), wrap="none", undo=True)
-        self.quiz_text.pack(fill="x")
-        ttk.Label(right, text="그림 자리에는 아래 스티커 이름이나 사진 파일 경로(예: C:/사진/카톡.png)를 쓸 수 있어요.\n"
-                              "쓸 수 있는 이름: " + ", ".join(sticker_names()), wraplength=500,
-                  foreground="#666").pack(anchor="w")
+        # 스티커 / 퀴즈 / 티어리스트는 탭 하나에 모아서 작은 화면에서도 버튼이 보이게 한다
+        tabs = self.tabs = ttk.Notebook(right)
+        tabs.pack(fill="x", pady=(8, 0))
+        self.sticker_text = self._tab(tabs, "그림 스티커", "한 줄에 '나타나는 시점(초) 이름' · 줄을 지우면 안 나와요\n"
+                                      "쓸 수 있는 이름: " + ", ".join(sticker_names()))
+        self.quiz_text = self._tab(tabs, "퀴즈 카드", "한 줄에 '문제 시작(초) 정답 공개(초) O/X 그림' · 예: 1.5 4.8 O 휴대폰\n"
+                                   "그림 자리에 스티커 이름이나 사진 파일 경로(예: C:/사진/카톡.png)")
+        self.tier_text = self._tab(tabs, "티어리스트", "한 줄에 '나타나는 시점(초) 등급 글자' · 예: 3.2 S 욕설")
 
         bottom = ttk.Frame(self.root)
         bottom.pack(fill="x", **pad)
@@ -148,6 +147,14 @@ class App:
         self.open_btn = ttk.Button(bottom, text="결과 폴더 열기", command=self.open_output, state="disabled")
         self.open_btn.pack(side="left", padx=8)
         self.last_output: str | None = None
+
+    def _tab(self, tabs: ttk.Notebook, title: str, hint: str) -> tk.Text:
+        frame = ttk.Frame(tabs)
+        tabs.add(frame, text=title)
+        ttk.Label(frame, text=hint, wraplength=500, foreground="#666").pack(anchor="w")
+        text = tk.Text(frame, height=4, font=("Malgun Gothic", 11), wrap="none", undo=True)
+        text.pack(fill="x")
+        return text
 
     def _refresh_bgm_list(self) -> None:
         self.bgm_paths = {p.stem: str(p) for p in sorted(bgm_dir().glob("*.mp3"))} if bgm_dir().exists() else {}
@@ -166,7 +173,7 @@ class App:
 
     def _set_enabled(self, on: bool) -> None:
         state = "normal" if on else "disabled"
-        for w in [self.title_text, self.sub_text, self.sticker_text, self.quiz_text, self.render_btn, *self.item_widgets]:
+        for w in [self.title_text, self.sub_text, self.sticker_text, self.quiz_text, self.tier_text, self.render_btn, *self.item_widgets]:
             w.configure(state=state)
 
     def _style(self) -> str:
@@ -177,7 +184,7 @@ class App:
         style, count = self._style(), int(self.count_var.get())
         for w in (*self.item_head, *[x for r in self.item_rows.values() for x in r]):
             w.grid_remove()
-        if style in ("none", "quiz"):
+        if style in ("none", "quiz", "tier"):
             return
         for col, w in enumerate(self.item_head):
             w.grid(row=0, column=col)
@@ -231,11 +238,15 @@ class App:
         self.retouch_var.set(p.retouch)
         self.slim_var.set(p.slim)
         self.face_note.configure(text="얼굴을 찾았어요" if p.face_box else "얼굴을 못 찾아서 밝기·혈색만 보정해요")
+        self.tier_text.delete("1.0", "end")
+        self.tier_text.insert("1.0", "\n".join(f"{t.time:.2f} {t.tier} {t.text}" for t in p.tiers))
         self.quiz_text.delete("1.0", "end")
         self.quiz_text.insert("1.0", "\n".join(f"{q.start:.2f} {q.reveal:.2f} {q.answer} {q.image}" for q in p.quiz))
         self.sticker_text.delete("1.0", "end")
         self.sticker_text.insert("1.0", "\n".join(f"{x.start:.2f} {x.name}" for x in p.stickers))
-        self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개")
+        self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개 · 도입부: {p.hook_type or '-'}")
+        # 퀴즈·티어 영상이면 해당 편집 탭을 바로 보여준다
+        self.tabs.select({"quiz": 1, "tier": 2}.get(p.list_style, 0))
 
     def _collect(self) -> Project:
         from .project import RankItem
@@ -263,6 +274,7 @@ class App:
         p.slim = self.slim_var.get()
         p.stickers = self._read_stickers(p)
         p.quiz = self._read_quiz(p)
+        p.tiers = self._read_tiers()
         return p
 
     def _read_stickers(self, p: Project) -> list:
@@ -285,6 +297,23 @@ class App:
             old = known.get((round(start, 2), name))
             out.append(old or Sticker(start, min(start + 2.5, p.duration), name))
         return out
+
+    def _read_tiers(self) -> list:
+        from .project import TierItem
+
+        items = []
+        for n, raw in enumerate(self.tier_text.get("1.0", "end").splitlines(), start=1):
+            parts = raw.split(maxsplit=2)
+            if not parts:
+                continue
+            try:
+                t, grade, text = float(parts[0]), parts[1].upper(), parts[2].strip()
+            except (ValueError, IndexError):
+                raise ValueError(f"티어리스트 {n}번째 줄: '시점 등급 글자' 순서로 적어주세요 (예: 3.2 S 욕설)")
+            if grade not in ("S", "A", "B", "C"):
+                raise ValueError(f"티어리스트 {n}번째 줄: 등급은 S, A, B, C 중 하나로 적어주세요")
+            items.append(TierItem(grade, t, text))
+        return items
 
     def _read_quiz(self, p: Project) -> list:
         from .project import QuizItem
