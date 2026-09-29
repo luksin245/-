@@ -33,11 +33,12 @@ def zoom_blocks(segments: list[tuple[float, float]]) -> list[tuple[int, int]]:
 
 
 def build_graph(segments: list[tuple[float, float]], face_box: list[int] | None,
-                label_in: str, label_out: str) -> str:
+                label_in: str, label_out: str, frame0: int = 0) -> str:
+    """frame0: 들어오는 첫 프레임이 최종 영상의 몇 번째 프레임인지 (미리보기용)."""
     blocks = zoom_blocks(segments)
     if not blocks:
         return f"[{label_in}]null[{label_out}]"
-    on = "+".join(f"between(in,{a},{b - 1})" for a, b in blocks)
+    on = "+".join(f"between(in+{frame0},{a},{b - 1})" for a, b in blocks)
     z = f"if({on},{ZOOM},1)"
     if face_box:
         fx, fy = face_box[0] + face_box[2] / 2, face_box[1] + face_box[3] / 2
@@ -46,5 +47,6 @@ def build_graph(segments: list[tuple[float, float]], face_box: list[int] | None,
     # 얼굴 중심 (fx, fy)가 확대 전후 같은 위치에 오도록
     x = f"{fx:.0f}*(1-1/zoom)"
     y = f"{fy:.0f}*(1-1/zoom)"
+    # zoompan 은 시간을 0부터 새로 매기므로 원래 시간으로 되돌린다
     return (f"[{label_in}]zoompan=z='{z}':x='{x}':y='{y}':d=1:s={W}x{H}:fps={FPS},"
-            f"setsar=1[{label_out}]")
+            f"setpts=(N+{frame0})/{FPS}/TB,setsar=1[{label_out}]")

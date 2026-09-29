@@ -47,6 +47,13 @@ jobs:
             python tools/make_fake_raw.py "$src" /tmp/raw.mp4 3
             python -m reels_auto /tmp/raw.mp4 --no-render --dump /tmp/raw.json
           done
+      - name: 여러 영상 한 번에 + 미리보기
+        run: |
+          python -m reels_auto --batch-dir /tmp/batch "$(python tools/find_ref.py 퇴직금)" "$(python tools/find_ref.py 원본테스트)"
+          ls -la /tmp/batch
+          test "$(ls /tmp/batch/*.mp4 | wc -l)" = 2
+          python -m reels_auto "$(python tools/find_ref.py 원본테스트)" --project "$(ls /tmp/batch/원본테스트*.json | head -1)" --preview 12 -o /tmp/preview.png
+          ls -la /tmp/preview.png
       - name: 렌더링 (목록형 / 질문·답변형 / 퀴즈형 / 티어리스트)
         run: |
           python -m reels_auto reference/근로계약서.mp4 -o /tmp/out1.mp4

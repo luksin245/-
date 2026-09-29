@@ -13,6 +13,10 @@ import sys
 from pathlib import Path
 
 
+def progress_fn(msg: str, frac: float) -> None:
+    print(f"[{frac * 100:5.1f}%] {msg}", flush=True)
+
+
 def cli(argv: list[str]) -> int:
     from .ass import TITLE_FONTS
     from .pipeline import analyze_video
@@ -20,7 +24,10 @@ def cli(argv: list[str]) -> int:
     from .render import render
 
     ap = argparse.ArgumentParser(prog="reels_auto")
-    ap.add_argument("video")
+    ap.add_argument("video", nargs="+", help="원본 영상 (--batch-dir 을 쓰면 여러 개)")
+    ap.add_argument("--batch-dir", help="여러 영상을 한 번에 만들어 이 폴더에 저장")
+    ap.add_argument("--preview", type=float, help="이 시점(초) 화면 한 장만 PNG로 저장 (-o 에 .png)")
+    ap.add_argument("--no-voice-clean", action="store_true", help="목소리 잡음 줄이기 끄기")
     ap.add_argument("-o", "--output")
     ap.add_argument("--project", help="저장해 둔 편집 정보(json)로 렌더링")
     ap.add_argument("--words-json", help="음성 인식 대신 쓸 단어 목록(json, 테스트용)")
@@ -35,9 +42,20 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--title-font", choices=list(TITLE_FONTS), help="제목 글꼴")
     ap.add_argument("--keep-ng", action="store_true", help="다시 말한 부분(NG)을 빼지 않음")
     a = ap.parse_args(argv)
+    if a.batch_dir:
+        from . import prefs as prefs_mod
+        from .batch import run_batch
 
-    def progress(msg: str, frac: float) -> None:
-        print(f"[{frac * 100:5.1f}%] {msg}", flush=True)
+        pr = prefs_mod.load()
+        pr["remove_ng"] = not a.keep_ng
+        for src, out, err in run_batch(a.video, a.batch_dir, pr, progress_fn):
+            print(f"{src} → {out or '실패: ' + str(err)}")
+        return 0
+    if len(a.video) > 1:
+        ap.error("영상을 여러 개 넣으려면 --batch-dir 을 같이 써주세요")
+    a.video = a.video[0]
+
+    progress = progress_fn
 
     if a.project:
         p = Project.from_json(Path(a.project).read_text(encoding="utf-8"))
@@ -58,6 +76,8 @@ def cli(argv: list[str]) -> int:
         p.stickers = []
     if a.no_zoom:
         p.punch_zoom = False
+    if a.no_voice_clean:
+        p.voice_clean = False
     if a.title_font:
         p.title_font = a.title_font
     if a.dump:
@@ -74,7 +94,13 @@ def cli(argv: list[str]) -> int:
         print(f"  퀴즈 {q.start}~{q.end} 정답 {q.answer} @{q.reveal} 그림 {q.image}")
     for it in p.items:
         print(f"  {it.rank}. @{it.time}: {it.text}")
-    if not a.no_render:
+    if a.preview is not None:
+        from .render import render_preview
+
+        out = a.output or str(Path(a.video).with_name(Path(a.video).stem + "_미리보기.png"))
+        render_preview(p, a.preview, out)
+        print("미리보기 저장:", out)
+    elif not a.no_render:
         out = a.output or str(Path(a.video).with_name(Path(a.video).stem + "_릴스.mp4"))
         render(p, out, lambda f: progress("영상 만드는 중", f))
         print("저장:", out)

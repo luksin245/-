@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
+from dataclasses import replace
+
 from .project import Word
 
 CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
@@ -89,5 +91,5 @@ def fix_words(words: list[Word], glossary: list[str], fixes: list[tuple[str, str
             term = best_term(body, terms)
             if term:
                 text = lead + term + trail
-        out.append(w if text == w.text else Word(w.start, w.end, text))
+        out.append(w if text == w.text else replace(w, text=text))
     return out

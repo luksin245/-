@@ -11,6 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
+from . import prefs as prefs_mod
 from .analyze import retime_captions
 from .analyze import MAX_ITEMS
 from .ass import DEFAULT_TITLE_FONT, TITLE_FONTS
@@ -18,6 +19,8 @@ from .stickers import names as sticker_names
 from .face import DEFAULT_LEVEL, DEFAULT_SLIM, LEVELS, SLIM_LEVELS
 from .paths import bgm_dir
 from .project import Project
+
+UNSURE = 0.6  # 음성 인식 확신도가 이보다 낮은 단어는 자막 칸에서 노란색으로 표시
 
 NO_BGM = "(BGM 없음)"
 STYLE_LABELS = {"none": "표시 안 함", "rank": "순위형 (TOP N · 아래부터)", "ordinal": "나열형 (N가지 · 위부터)",
@@ -32,9 +35,11 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.busy = False
         root.title(f"릴스 자동 편집 v{__version__}")
-        root.geometry("1040x820")
+        root.geometry("1080x880")
         root.minsize(900, 700)
+        self.prefs = prefs_mod.load()
         self._build()
+        self._load_prefs()
         self._set_enabled(False)
         root.after(100, self._poll)
 
@@ -46,6 +51,8 @@ class App:
         ttk.Button(top, text="① 원본 영상 고르기", command=self.pick_video).pack(side="left")
         self.src_label = ttk.Label(top, text="아직 고른 영상이 없어요")
         self.src_label.pack(side="left", padx=10)
+        ttk.Button(top, text="여러 영상 한 번에 만들기", command=self.start_batch).pack(side="right")
+        ttk.Button(top, text="저장한 편집 정보 열기", command=self.open_project).pack(side="right", padx=6)
 
         prog = ttk.Frame(self.root)
         prog.pack(fill="x", **pad)
@@ -129,15 +136,19 @@ class App:
         ttk.Combobox(faces, textvariable=self.slim_var, values=list(SLIM_LEVELS), state="readonly", width=8).grid(row=1, column=1, padx=6, pady=2)
         self.zoom_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(left, text="컷마다 살짝 확대 (끊긴 티 덜 나게)", variable=self.zoom_var).pack(anchor="w", pady=(6, 0))
+        self.voice_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(left, text="목소리 깨끗하게 (잡음·웅웅거림 줄이기)", variable=self.voice_var).pack(anchor="w")
         self.face_note = ttk.Label(left, text="", foreground="#666")
         self.face_note.pack(anchor="w")
 
         ttk.Label(right, text="자막 (한 줄 = 화면에 한 번 나오는 자막 · 글자만 고치면 타이밍은 그대로)").pack(anchor="w")
+        ttk.Label(right, text="노란색 = 음성 인식이 확실하지 않은 단어예요. 맞는지 한 번 확인해 주세요.", foreground="#8a6d00").pack(anchor="w")
         sub_frame = ttk.Frame(right)
         sub_frame.pack(fill="both", expand=True)
         self.sub_text = tk.Text(sub_frame, font=("Malgun Gothic", 11), wrap="none", undo=True)
         scroll = ttk.Scrollbar(sub_frame, command=self.sub_text.yview)
         self.sub_text.configure(yscrollcommand=scroll.set)
+        self.sub_text.tag_configure("unsure", background="#FFE08A")
         self.sub_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
 
@@ -149,6 +160,7 @@ class App:
         self.quiz_text = self._tab(tabs, "퀴즈 카드", "한 줄에 '문제 시작(초) 정답 공개(초) O/X 그림' · 예: 1.5 4.8 O 휴대폰\n"
                                    "그림 자리에 스티커 이름이나 사진 파일 경로(예: C:/사진/카톡.png)")
         self.tier_text = self._tab(tabs, "티어리스트", "한 줄에 '나타나는 시점(초) 등급 글자' · 예: 3.2 S 욕설")
+        self._build_chunk_tab(tabs)
 
         bottom = ttk.Frame(self.root)
         bottom.pack(fill="x", **pad)
@@ -156,6 +168,12 @@ class App:
         self.render_btn.pack(side="left")
         self.open_btn = ttk.Button(bottom, text="결과 폴더 열기", command=self.open_output, state="disabled")
         self.open_btn.pack(side="left", padx=8)
+        ttk.Label(bottom, text="미리보기 시점(초)").pack(side="left", padx=(24, 4))
+        self.preview_var = tk.StringVar(value="3")
+        ttk.Entry(bottom, textvariable=self.preview_var, width=6).pack(side="left")
+        self.preview_btn = ttk.Button(bottom, text="이 장면 미리보기", command=self.start_preview)
+        self.preview_btn.pack(side="left", padx=6)
+        self.preview_win: tk.Toplevel | None = None
         self.last_output: str | None = None
 
     def _tab(self, tabs: ttk.Notebook, title: str, hint: str) -> tk.Text:
@@ -165,6 +183,74 @@ class App:
         text = tk.Text(frame, height=4, font=("Malgun Gothic", 11), wrap="none", undo=True)
         text.pack(fill="x")
         return text
+
+    def _build_chunk_tab(self, tabs: ttk.Notebook) -> None:
+        frame = ttk.Frame(tabs)
+        tabs.add(frame, text="NG·컷 조각")
+        ttk.Label(frame, text="두 번 클릭하면 넣기/빼기가 바뀌어요 (✗ = 영상에서 뺀 조각). 다 고르고 '적용'을 누르세요.\n"
+                              "적용하면 자막을 새로 만들어요 (자막 수정은 적용한 다음에 해주세요).",
+                  foreground="#666").pack(anchor="w")
+        box = ttk.Frame(frame)
+        box.pack(fill="x")
+        self.chunk_tree = ttk.Treeview(box, columns=("use", "time", "text", "why"), show="headings", height=4)
+        for col, title, width in (("use", "사용", 40), ("time", "원본 시점", 70), ("text", "말", 330), ("why", "뺀 이유", 90)):
+            self.chunk_tree.heading(col, text=title)
+            self.chunk_tree.column(col, width=width, stretch=(col == "text"))
+        scroll = ttk.Scrollbar(box, command=self.chunk_tree.yview)
+        self.chunk_tree.configure(yscrollcommand=scroll.set)
+        self.chunk_tree.pack(side="left", fill="x", expand=True)
+        scroll.pack(side="left", fill="y")
+        self.chunk_tree.bind("<Double-1>", self._toggle_chunk)
+        self.chunk_apply_btn = ttk.Button(frame, text="적용 (영상 길이·자막 다시 만들기)", command=self.apply_chunks)
+        self.chunk_apply_btn.pack(anchor="w", pady=2)
+
+    def _fill_chunks(self, p: Project) -> None:
+        self.chunk_tree.delete(*self.chunk_tree.get_children())
+        for i, c in enumerate(p.chunks):
+            self.chunk_tree.insert("", "end", iid=str(i), values=("✓" if c.keep else "✗", f"{c.start:.1f}초",
+                                                                  c.text or "(말 없음)", "" if c.keep else c.reason))
+
+    def _toggle_chunk(self, _event=None) -> None:
+        if self.project is None or self.busy:
+            return
+        for iid in self.chunk_tree.selection():
+            c = self.project.chunks[int(iid)]
+            c.keep = not c.keep
+            c.reason = "" if c.keep else (c.reason or "직접 뺌")
+            self.chunk_tree.item(iid, values=("✓" if c.keep else "✗", f"{c.start:.1f}초", c.text or "(말 없음)",
+                                              "" if c.keep else c.reason))
+
+    def apply_chunks(self) -> None:
+        from .chunks import apply_chunks
+
+        if self.project is None or self.busy or not self.project.chunks:
+            return
+        try:
+            p = self._collect()
+            apply_chunks(p)
+        except ValueError as e:
+            messagebox.showwarning("확인해주세요", str(e))
+            return
+        self._fill_form(p)
+        self.tabs.select(3)
+
+    def _highlight_unsure(self, p: Project) -> None:
+        """확신도가 낮은 단어를 자막 칸에서 노란색으로 표시."""
+        import re
+
+        self.sub_text.tag_remove("unsure", "1.0", "end")
+        for row, c in enumerate(p.captions, start=1):
+            line = c.text
+            pos = 0
+            for w in p.words:
+                if not (c.start - 0.05 <= (w.start + w.end) / 2 < c.end + 0.05) or w.prob >= UNSURE:
+                    continue
+                word = re.sub(r"[.,?!]+$", "", w.text.strip())
+                k = line.find(word, pos) if word else -1
+                if k < 0:
+                    continue
+                self.sub_text.tag_add("unsure", f"{row}.{k}", f"{row}.{k + len(word)}")
+                pos = k + len(word)
 
     def _refresh_bgm_list(self) -> None:
         self.bgm_paths = {p.stem: str(p) for p in sorted(bgm_dir().glob("*.mp3"))} if bgm_dir().exists() else {}
@@ -183,8 +269,44 @@ class App:
 
     def _set_enabled(self, on: bool) -> None:
         state = "normal" if on else "disabled"
-        for w in [self.title_text, self.sub_text, self.sticker_text, self.quiz_text, self.tier_text, self.render_btn, *self.item_widgets]:
+        for w in [self.title_text, self.sub_text, self.sticker_text, self.quiz_text, self.tier_text, self.render_btn,
+                  self.preview_btn, self.chunk_apply_btn, *self.item_widgets]:
             w.configure(state=state)
+
+    # ---------- 설정 기억 ----------
+    def _load_prefs(self) -> None:
+        pr = self.prefs
+        self.title_font_var.set(pr["title_font"] if pr["title_font"] in TITLE_FONTS else DEFAULT_TITLE_FONT)
+        if pr["no_bgm"]:
+            self.bgm_var.set(NO_BGM)
+        elif pr["bgm"] and Path(pr["bgm"]).exists():
+            self.bgm_paths.setdefault(Path(pr["bgm"]).stem, pr["bgm"])
+            self.bgm_box["values"] = [NO_BGM, *self.bgm_paths.keys(), PICK_BGM]
+            self.bgm_var.set(Path(pr["bgm"]).stem)
+        self.vol_var.set(pr["bgm_volume"])
+        self.retouch_var.set(pr["retouch"])
+        self.slim_var.set(pr["slim"])
+        self.zoom_var.set(pr["punch_zoom"])
+        self.voice_var.set(pr["voice_clean"])
+        self.ng_var.set(pr["remove_ng"])
+
+    def _current_prefs(self) -> dict:
+        choice = self.bgm_var.get()
+        return {
+            "title_font": self.title_font_var.get(),
+            "bgm": self.bgm_paths.get(choice),
+            "no_bgm": choice == NO_BGM,
+            "bgm_volume": round(float(self.vol_var.get()), 3),
+            "retouch": self.retouch_var.get(),
+            "slim": self.slim_var.get(),
+            "punch_zoom": bool(self.zoom_var.get()),
+            "voice_clean": bool(self.voice_var.get()),
+            "remove_ng": bool(self.ng_var.get()),
+        }
+
+    def _save_prefs(self) -> None:
+        self.prefs = self._current_prefs()
+        prefs_mod.save(self.prefs)
 
     def _style(self) -> str:
         return next((k for k, v in STYLE_LABELS.items() if v == self.style_var.get()), "none")
@@ -232,6 +354,7 @@ class App:
         self.title_text.insert("1.0", p.title)
         self.title_font_var.set(p.title_font if p.title_font in TITLE_FONTS else DEFAULT_TITLE_FONT)
         self.zoom_var.set(p.punch_zoom)
+        self.voice_var.set(p.voice_clean)
         self.style_var.set(STYLE_LABELS.get(p.list_style, STYLE_LABELS["none"]))
         self.count_var.set(p.list_count if p.list_count >= 2 else 5)
         by_slot = {it.rank: it for it in p.items}
@@ -242,6 +365,8 @@ class App:
         self._layout_items()
         self.sub_text.delete("1.0", "end")
         self.sub_text.insert("1.0", "\n".join(c.text for c in p.captions))
+        self._highlight_unsure(p)
+        self._fill_chunks(p)
         name = Path(p.bgm).stem if p.bgm else NO_BGM
         if p.bgm:
             self.bgm_paths.setdefault(name, p.bgm)
@@ -285,6 +410,7 @@ class App:
         p.bgm_volume = float(self.vol_var.get())
         p.title_font = self.title_font_var.get()
         p.punch_zoom = bool(self.zoom_var.get())
+        p.voice_clean = bool(self.voice_var.get())
         p.retouch = self.retouch_var.get()
         p.slim = self.slim_var.get()
         p.stickers = self._read_stickers(p)
@@ -356,6 +482,85 @@ class App:
             items.append(QuizItem(start, max(reveal, start), end, answer, image))
         return items
 
+    def open_project(self) -> None:
+        """'여러 영상 한 번에'가 만든 편집 정보(.json)를 열어서 고친 뒤 다시 만들기."""
+        if self.busy:
+            return
+        path = filedialog.askopenfilename(title="편집 정보 열기", filetypes=[("편집 정보", "*.json")])
+        if not path:
+            return
+        try:
+            p = Project.from_json(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            messagebox.showerror("열 수 없어요", f"편집 정보 파일이 아니에요:\n{e}")
+            return
+        if not Path(p.source).exists():
+            messagebox.showwarning("원본을 찾을 수 없어요", f"원본 영상이 옮겨졌거나 지워졌어요:\n{p.source}")
+            return
+        self.source = p.source
+        self.src_label.configure(text=p.source)
+        self.analyze_btn.configure(state="normal")
+        self.project = p
+        self._fill_form(p)
+
+    def start_batch(self) -> None:
+        if self.busy:
+            return
+        files = filedialog.askopenfilenames(title="원본 영상 여러 개 고르기 (Ctrl 누르고 클릭)",
+                                            filetypes=[("영상", "*.mp4 *.mov *.m4v *.mkv *.avi"), ("모든 파일", "*.*")])
+        if not files:
+            return
+        folder = filedialog.askdirectory(title="완성된 영상을 저장할 폴더")
+        if not folder:
+            return
+        self._save_prefs()
+        if not messagebox.askyesno("여러 영상 한 번에", f"{len(files)}개 영상을 차례대로 자동으로 만들어요.\n"
+                                   "지금 고른 설정(제목 글꼴, 음악, 얼굴 보정 등)이 모두 적용돼요.\n"
+                                   "영상 길이에 따라 오래 걸릴 수 있어요. 시작할까요?"):
+            return
+        self._run_bg(self._batch_job, list(files), folder, dict(self.prefs))
+
+    def _batch_job(self, files: list[str], folder: str, prefs: dict) -> None:
+        from .batch import run_batch
+
+        results = run_batch(files, folder, prefs, lambda m, f: self.events.put(("progress", m, f)))
+        self.events.put(("batch_done", folder, results))
+
+    def start_preview(self) -> None:
+        if self.busy or self.project is None:
+            return
+        try:
+            at = float(self.preview_var.get())
+        except ValueError:
+            messagebox.showwarning("확인해주세요", "미리보기 시점은 숫자(초)로 적어주세요 (예: 12.5)")
+            return
+        try:
+            p = self._collect()
+        except ValueError as e:
+            messagebox.showwarning("확인해주세요", str(e))
+            return
+        import tempfile
+
+        out = str(Path(tempfile.gettempdir()) / "reels_auto_preview.png")
+        self._run_bg(self._preview_job, p, at, out)
+
+    def _preview_job(self, p: Project, at: float, out: str) -> None:
+        from .render import render_preview
+
+        self.events.put(("progress", "미리보기 만드는 중", 0.5))
+        render_preview(p, at, out)
+        self.events.put(("preview", out, at))
+
+    def _show_preview(self, path: str, at: float) -> None:
+        if self.preview_win is None or not self.preview_win.winfo_exists():
+            self.preview_win = tk.Toplevel(self.root)
+            self.preview_label = ttk.Label(self.preview_win)
+            self.preview_label.pack()
+        self.preview_win.title(f"미리보기 · {at:.1f}초")
+        self.preview_img = tk.PhotoImage(file=path)  # 참조를 붙잡아 둬야 그림이 사라지지 않는다
+        self.preview_label.configure(image=self.preview_img)
+        self.preview_win.lift()
+
     def start_render(self) -> None:
         if self.busy or self.project is None:
             return
@@ -368,6 +573,7 @@ class App:
         out = filedialog.asksaveasfilename(title="저장할 곳", initialdir=str(Path(p.source).parent),
                                            initialfile=default, defaultextension=".mp4", filetypes=[("MP4", "*.mp4")])
         if out:
+            self._save_prefs()
             self._run_bg(self._render_job, p, out)
 
     def _render_job(self, p: Project, out: str) -> None:
@@ -392,6 +598,7 @@ class App:
         self.busy = True
         self.analyze_btn.configure(state="disabled")
         self.render_btn.configure(state="disabled")
+        self.preview_btn.configure(state="disabled")
 
         def wrapper():
             try:
@@ -406,6 +613,7 @@ class App:
         self.analyze_btn.configure(state="normal")
         if self.project is not None:
             self.render_btn.configure(state="normal")
+            self.preview_btn.configure(state="normal")
 
     def _poll(self) -> None:
         try:
@@ -416,6 +624,7 @@ class App:
                     self.status.configure(text=ev[1])
                     self.progress["value"] = ev[2]
                 elif kind == "analyzed":
+                    prefs_mod.apply(ev[1], self._current_prefs())
                     self.project = ev[1]
                     self._fill_form(ev[1])
                     self._done()
@@ -425,6 +634,25 @@ class App:
                     self.status.configure(text="완성!")
                     self._done()
                     messagebox.showinfo("완성", f"저장했어요:\n{ev[1]}")
+                elif kind == "preview":
+                    self.status.configure(text="미리보기 완성")
+                    self.progress["value"] = 0
+                    self._done()
+                    self._show_preview(ev[1], ev[2])
+                elif kind == "batch_done":
+                    self._done()
+                    folder, results = ev[1], ev[2]
+                    ok = [r for r in results if r[1]]
+                    bad = [f"· {Path(r[0]).name}: {r[2][:200]}" for r in results if not r[1]]
+                    self.last_output = ok[-1][1] if ok else None
+                    if ok:
+                        self.open_btn.configure(state="normal")
+                    self.status.configure(text=f"여러 영상 끝: {len(ok)}개 완성" + (f", {len(bad)}개 실패" if bad else ""))
+                    msg = f"{len(ok)}개를 만들었어요:\n{folder}"
+                    if bad:
+                        msg += "\n\n만들지 못한 영상:\n" + "\n".join(bad)
+                    msg += "\n\n고치고 싶은 영상은 '저장한 편집 정보 열기'로 같은 이름의 .json 파일을 열면 돼요."
+                    messagebox.showinfo("여러 영상 한 번에", msg)
                 elif kind == "error":
                     self._done()
                     self.status.configure(text="오류가 났어요")

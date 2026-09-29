@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+from dataclasses import replace
+
 from . import analyze, cutter
+from .chunks import cut_to_src
 from .media import load_audio
 from .paths import bgm_dir
 from .project import Project, Word
@@ -41,16 +44,22 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         cut = cutter.cut_audio(audio, 16000, segments)
         words = transcribe(cut, lambda f: report("음성 인식 중", 0.1 + 0.85 * f))
 
+    overrides: dict[int, str] = {}
+    if remove_ng and transcribe_clip is not None:
+        for i in suspicious_segments(segments, words):
+            s, e = segments[i]
+            overrides[i] = transcribe_clip(audio[int(s * 16000): int(e * 16000)])
+    kept, kept_words, removed, chunks, src_words = remove_retakes(segments, words, overrides)
     ng_removed: list[str] = []
     if remove_ng:
-        overrides: dict[int, str] = {}
-        if transcribe_clip is not None:
-            for i in suspicious_segments(segments, words):
-                s, e = segments[i]
-                overrides[i] = transcribe_clip(audio[int(s * 16000): int(e * 16000)])
-        segments, words, removed = remove_retakes(segments, words, overrides)
+        segments, words = kept, kept_words
         duration = round(cutter.total_length(segments), 3)
         ng_removed = [f"{r.start:.1f}초 · {r.reason} · {r.text}" for r in removed if r.text]
+    else:  # NG를 빼지 않아도 조각 목록은 남겨서 나중에 직접 고를 수 있게
+        for c in chunks:
+            c.keep, c.reason = True, ""
+        src_words = [replace(w, start=round(cut_to_src(w.start, segments), 3), end=round(cut_to_src(w.end, segments), 3))
+                     for w in words]
 
     report("얼굴 위치 찾는 중", 0.97)
     from .face import detect_face_box
@@ -84,4 +93,6 @@ def analyze_video(source: str, on_progress: Progress | None = None, words: list[
         tiers=tier_items,
         hook_type=classify_hook(words, style),
         ng_removed=ng_removed,
+        chunks=chunks,
+        src_words=src_words,
     )

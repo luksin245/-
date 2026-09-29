@@ -58,7 +58,7 @@ def transcribe(audio16k: np.ndarray, on_progress: Callable[[float], None] | None
         for w in seg.words or []:
             text = w.word.strip()
             if text:
-                words.append(Word(round(w.start, 3), round(w.end, 3), text))
+                words.append(Word(round(w.start, 3), round(w.end, 3), text, round(float(w.probability), 2)))
         if on_progress and duration:
             on_progress(min(1.0, seg.end / duration))
     return correct(words)

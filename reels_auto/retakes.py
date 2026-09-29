@@ -11,7 +11,9 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from .project import Word
+from dataclasses import replace
+
+from .project import Chunk, Word
 
 FILLERS = {"음", "어", "아", "그", "저", "으음", "음음", "어어", "에", "흠"}
 NG_PHRASES = ("다시할게", "다시갈게", "다시하겠", "다시할께", "잠깐만", "죄송합니다", "틀렸다", "아잠깐", "컷")
@@ -80,8 +82,8 @@ def suspicious_segments(segments: list[tuple[float, float]], words: list[Word]) 
 
 def remove_retakes(segments: list[tuple[float, float]], words: list[Word],
                    overrides: dict[int, str] | None = None
-                   ) -> tuple[list[tuple[float, float]], list[Word], list[Removed]]:
-    """(남길 조각들, 시간을 다시 맞춘 단어들, 버린 조각 목록).
+                   ) -> tuple[list[tuple[float, float]], list[Word], list[Removed], list[Chunk], list[Word]]:
+    """(남길 조각들, 시간을 다시 맞춘 단어들, 버린 조각 목록, 전체 조각, 원본 기준 단어).
 
     words 는 잘린 영상(조각들을 이어 붙인) 기준 시간이다.
     overrides 는 조각 하나만 따로 받아 적은 글자 (suspicious_segments 참고).
@@ -119,8 +121,14 @@ def remove_retakes(segments: list[tuple[float, float]], words: list[Word],
         j = i + 1
         if reason == "다시 말함" and j < len(segments) and j not in drop and not by_seg[j] and by_seg[i]:
             shift = offsets[j] - offsets[i]
-            by_seg[j] = [Word(w.start + shift, w.end + shift, w.text) for w in by_seg[i]]
+            by_seg[j] = [replace(w, start=w.start + shift, end=w.end + shift) for w in by_seg[i]]
             by_seg[i] = []
+
+    # 뺀 조각까지 포함한 전체 조각과 원본 기준 단어 (나중에 NG를 직접 고를 때 쓴다)
+    chunks = [Chunk(s, e, texts[i], i not in drop, drop.get(i, "")) for i, (s, e) in enumerate(segments)]
+    src_words = [replace(w, start=round(w.start - offsets[i] + segments[i][0], 3),
+                              end=round(w.end - offsets[i] + segments[i][0], 3))
+                      for i in range(len(segments)) for w in by_seg[i]]
 
     kept_segments: list[tuple[float, float]] = []
     new_words: list[Word] = []
@@ -132,7 +140,7 @@ def remove_retakes(segments: list[tuple[float, float]], words: list[Word],
             continue
         shift = t_new - offsets[i]
         for w in by_seg[i]:
-            new_words.append(Word(round(w.start + shift, 3), round(w.end + shift, 3), w.text))
+            new_words.append(replace(w, start=round(w.start + shift, 3), end=round(w.end + shift, 3)))
         kept_segments.append((s, e))
         t_new += e - s
-    return kept_segments, new_words, removed
+    return kept_segments, new_words, removed, chunks, src_words

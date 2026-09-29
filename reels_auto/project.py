@@ -10,6 +10,17 @@ class Word:
     start: float  # 잘린 뒤(최종 영상) 기준 초
     end: float
     text: str
+    prob: float = 1.0  # 음성 인식이 이 단어를 얼마나 확신하는지 (0~1)
+
+
+@dataclass
+class Chunk:
+    """쉬는 구간으로 자른 원본 조각 하나. NG 조각도 keep=False 로 남겨서 나중에 되살릴 수 있다."""
+    start: float  # 원본 기준 초
+    end: float
+    text: str  # 이 조각에서 한 말
+    keep: bool = True
+    reason: str = ""  # 뺀 이유 (다시 말함 / NG 말 / 군말 / 말소리 없음 / 직접 뺌)
 
 
 @dataclass
@@ -66,12 +77,15 @@ class Project:
     face_box: list[int] | None = None  # 출력 화면 기준 얼굴 상자 [x, y, w, h]
     retouch: str = "약하게"  # 피부 보정: 끄기/약하게/보통/강하게
     punch_zoom: bool = True  # 컷마다 살짝 확대/원래 크기 번갈아
+    voice_clean: bool = True  # 목소리 잡음·울림 줄이기
     slim: str = "약하게"  # 얼굴형 갸름하게: 끄기/약하게/보통/강하게
     stickers: list[Sticker] = field(default_factory=list)  # 말에 맞춰 잠깐 튀어나오는 그림
     quiz: list[QuizItem] = field(default_factory=list)  # 퀴즈형일 때 문제별 카드와 정답
     tiers: list[TierItem] = field(default_factory=list)  # 티어리스트형일 때 등급별 항목
     hook_type: str = ""  # 도입부 후킹 유형 (docs/hook-patterns.md)
     ng_removed: list[str] = field(default_factory=list)  # 자동으로 뺀 NG 조각 설명 (원본 시점 · 이유 · 말)
+    chunks: list[Chunk] = field(default_factory=list)  # 뺀 조각까지 포함한 전체 조각 (NG 직접 고르기용)
+    src_words: list[Word] = field(default_factory=list)  # 전체 조각의 단어 (원본 기준 시간)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
@@ -86,6 +100,8 @@ class Project:
         d["stickers"] = [Sticker(**x) for x in d.get("stickers", [])]
         d["quiz"] = [QuizItem(**x) for x in d.get("quiz", [])]
         d["tiers"] = [TierItem(**x) for x in d.get("tiers", [])]
+        d["chunks"] = [Chunk(**x) for x in d.get("chunks", [])]
+        d["src_words"] = [Word(**w) for w in d.get("src_words", [])]
         if "top_mode" in d:  # 예전 형식
             d["list_style"], d["list_count"] = ("rank", 5) if d.pop("top_mode") else ("none", 0)
         return cls(**d)
