@@ -6,6 +6,7 @@ from typing import Callable
 
 import numpy as np
 
+from .fixwords import fix_words, load_fixes
 from .paths import app_dir, whisper_model
 from .project import Word
 
@@ -15,14 +16,23 @@ _model = None
 PROMPT = "3위는? 2위는? 마지막 1위는? 첫 번째, 두 번째, 세 번째. S티어, A티어."
 
 
-def glossary() -> str:
-    """assets/words.txt 의 전문 용어 (음성 인식 힌트)."""
+def glossary_terms() -> list[str]:
+    """assets/words.txt 의 전문 용어."""
     path = app_dir() / "assets" / "words.txt"
     if not path.exists():
-        return ""
-    words = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()
-             if ln.strip() and not ln.startswith("#")]
-    return ", ".join(words)
+        return []
+    return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith("#")]
+
+
+def glossary() -> str:
+    """음성 인식 힌트 문장으로 쓸 용어 목록."""
+    return ", ".join(glossary_terms())
+
+
+def correct(words: list[Word]) -> list[Word]:
+    """잘못 알아들은 전문 용어 고치기 (assets/fix_words.txt + 용어 사전)."""
+    return fix_words(words, glossary_terms(), load_fixes(app_dir() / "assets" / "fix_words.txt"))
 
 
 def _get_model():
@@ -51,7 +61,7 @@ def transcribe(audio16k: np.ndarray, on_progress: Callable[[float], None] | None
                 words.append(Word(round(w.start, 3), round(w.end, 3), text))
         if on_progress and duration:
             on_progress(min(1.0, seg.end / duration))
-    return words
+    return correct(words)
 
 
 def transcribe_text(audio16k: np.ndarray) -> str:
@@ -60,4 +70,5 @@ def transcribe_text(audio16k: np.ndarray) -> str:
         return ""
     segments, _ = _get_model().transcribe(audio16k, language="ko", beam_size=5, vad_filter=False,
                                           condition_on_previous_text=False, initial_prompt=glossary() or None)
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    text = " ".join(seg.text.strip() for seg in segments).strip()
+    return " ".join(w.text for w in correct([Word(0, 0, t) for t in text.split()]))
