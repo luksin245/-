@@ -23,6 +23,10 @@ def classify(words: list[Word], list_style: str = "none") -> str:
     first = re.split(r"(?<=[.?!])\s", head, maxsplit=1)[0]
     if re.search(r"(님|선생님)\s*[,]?", first) and "?" in head[:120]:
         return TYPES["ask_expert"]
+    first14 = " ".join(w.text.strip() for w in words[:14])
+    # "들어갔다고?", "별로 없지?" — 음성 인식이 ?를 빠뜨려도 앞부분에서 찾는다
+    if re.search(r"(갔다고|했다고|왔다고|없지|있지|많지)\??(\s|$|,)", first14) and "님" not in first14[:10]:
+        return TYPES["echo"]
     if re.search(r"받아\s*적어|해당\s*되면|해당하면", head):
         return TYPES["note_this"]
     if re.search(r"(TOP|탑)\s*\d|1위는", head, re.I) or re.search(r"([0-9]|두|세|네|다섯)\s*가지", first):
@@ -33,6 +37,7 @@ def classify(words: list[Word], list_style: str = "none") -> str:
         return TYPES["echo"]
     if list_style in ("quiz", "tier"):
         return TYPES["direct"]
-    if re.search(r"착각|오해|아니라", head) or len(re.findall(r"\d+일", head)) >= 2:
+    verdicts = len(re.findall(r"(못\s*받아|받아|안\s*나와|나와)(\s|,|$)", head))
+    if re.search(r"착각|오해|아니라", head) or len(re.findall(r"\d+일", head)) >= 2 or verdicts >= 3:
         return TYPES["myth"]
     return TYPES["other"]

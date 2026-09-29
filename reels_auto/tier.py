@@ -50,6 +50,19 @@ def _clean(text: str) -> str:
     return text.strip().strip(".,?!")
 
 
+def _short_phrase_before(words: list[Word], k: int, stop: int, limit: int = 3) -> list[str]:
+    """words[k]에서 거꾸로, 문장 끝이나 stop 전까지의 짧은 말(limit 단어 이하)."""
+    out: list[str] = []
+    j = k
+    while j > stop and len(out) <= limit:
+        t = words[j].text.strip()
+        if j != k and SENTENCE_END.search(t):
+            break
+        out.insert(0, t)
+        j -= 1
+    return out if 0 < len(out) <= limit else []
+
+
 def detect_tiers(words: list[Word]) -> list[TierItem]:
     """등급을 3번 이상 말하면 티어리스트형으로 본다."""
     marks = _mentions(words)
@@ -58,15 +71,18 @@ def detect_tiers(words: list[Word]) -> list[TierItem]:
     items: list[TierItem] = []
     prev_end = -1
     for n, (a, b, tier) in enumerate(marks):
-        # 등급 바로 앞, 같은 문장 안의 짧은 말을 항목으로 ("회식 불참, C티어")
-        before = []
-        k = a - 1
-        while k > prev_end and len(before) < 3 and not SENTENCE_END.search(words[k].text.strip()):
-            before.insert(0, words[k].text.strip())
-            k -= 1
-        if before:
-            text = _clean(" ".join(before))
-        else:
+        text = ""
+        # "S티어, 욕설." 처럼 등급 뒤에 쉼표가 있으면 항목은 뒤에 온다
+        tier_first = words[b].text.strip().endswith(",")
+        if a - 1 > prev_end and not tier_first:
+            prev_word = words[a - 1].text.strip()
+            if SENTENCE_END.search(prev_word) or prev_word.endswith(","):
+                # "칼퇴. C티어." — 항목을 따로 짧게 말한 경우
+                text = _clean(" ".join(_short_phrase_before(words, a - 1, prev_end)))
+            else:
+                # "회식 불참 C티어", "근무 시간에 유튜브나 게임 A티어" — 같은 문장 안에서 바로 앞
+                text = _clean(" ".join(_short_phrase_before(words, a - 1, prev_end, limit=5)))
+        if not text:
             # 등급을 먼저 말한 경우 ("S티어, 욕설.") 바로 뒤의 말
             after = []
             nxt = marks[n + 1][0] if n + 1 < len(marks) else len(words)
@@ -75,7 +91,7 @@ def detect_tiers(words: list[Word]) -> list[TierItem]:
                 if SENTENCE_END.search(after[-1]) or after[-1].endswith(","):
                     break
             text = _clean(" ".join(after))
-        items.append(TierItem(tier, round(words[b].end, 2), text[:14]))
+        items.append(TierItem(tier, round(words[b].end, 2), text[:16]))
         prev_end = b
     return items
 

@@ -127,6 +127,23 @@ def _item_at(words: list[Word], k: int, slot: int, hint_check: bool) -> RankItem
     while k < len(words) and len(words[k].text.strip()) <= 2 and words[k].text.strip().endswith("?"):
         k += 1
     if hint_check:
+        # "마지막 1위! 맞춰볼래? 힌트는 … 말이야. 우리 회사 너무 작아서 안돼 정답!"
+        # 처럼 "정답" 바로 앞에서 답을 말하는 경우: 정답 앞 말 덩어리(쉼 전까지)를 항목으로
+        answer_at = next((g for g in range(k, min(len(words), k + 30))
+                          if words[g].text.strip().strip("!.?,").startswith("정답")), None)
+        if answer_at is not None and answer_at > k:
+            picked: list[Word] = []
+            j = answer_at - 1
+            while j >= k and len(picked) < 6:
+                t = words[j].text.strip()
+                if picked and (SENTENCE_END.search(t) or re.search(r"(이야|말이야|거야)[.,]?$", t)
+                               or picked[0].start - words[j].end > 0.25):
+                    break
+                picked.insert(0, words[j])
+                j -= 1
+            if picked:
+                text = _clean(" ".join(w.text.strip() for w in picked)).rstrip("?")
+                return RankItem(slot, round(picked[0].start, 2), text[:18])
         # "마지막 1위 맞춰 볼래? 힌트는 …" 이면 힌트 문장이 끝난 뒤에 공개
         window = words[k: k + 15]
         hint = next((k + n for n, w in enumerate(window) if "힌트" in w.text), None)
@@ -136,9 +153,16 @@ def _item_at(words: list[Word], k: int, slot: int, hint_check: bool) -> RankItem
             k = _sentence_end_after(words, hint) + 1
     if k >= len(words):
         return RankItem(slot, None, "")
+    # 앞에 붙은 "아니"(말 바꿈)는 뺀다
+    while k < len(words) - 1 and words[k].text.strip().strip(",.") in ("아니", "아니야"):
+        k += 1
     end = _sentence_end_after(words, k, limit=3)
     picked = []
-    for w in words[k: end + 1]:
+    for idx in range(k, end + 1):
+        w = words[idx]
+        # 다음 순위 질문("3위는요?")이나 "마지막"이 나오면 거기서 끊는다
+        if picked and (_rank_of(words, idx) is not None or w.text.strip().startswith("마지막")):
+            break
         picked.append(w.text.strip())
         if re.search(r"[,.?!]$", picked[-1]):  # 쉼표에서도 끊는다
             break
@@ -194,9 +218,32 @@ def _ordinal_list(words: list[Word], expected: int | None) -> tuple[int, list[Ra
     return count, items
 
 
+def _ascending_rank_list(words: list[Word], expected: int | None) -> tuple[int, list[RankItem]] | None:
+    """"1. … 2. … 3. …"이 "1위, 2위, 3위"로 인식된 경우: 순위가 1부터 올라가면 나열형으로 본다."""
+    marks = [(i, r) for i in range(len(words)) if (r := _rank_of(words, i)) is not None]
+    chosen: dict[int, int] = {}
+    prev = -1
+    for n in range(1, MAX_ITEMS + 1):
+        hit = next((i for i, r in marks if r == n and i > prev), None)
+        if hit is None:
+            break
+        chosen[n] = hit
+        prev = hit
+    count = len(chosen)
+    if count < 3 or (expected and count < expected):
+        return None
+    return count, [_item_at(words, chosen[n] + 1, n, False) for n in range(1, count + 1)]
+
+
 def detect_list(words: list[Word]) -> tuple[str, int, list[RankItem]]:
     """(형식, 개수, 항목들). 형식: "rank"(TOP N, 아래부터) / "ordinal"(N가지, 위부터) / "none"."""
     expected = announced_count(words)
+    ascending = _ascending_rank_list(words, expected)
+    if ascending:
+        # "1위, 2위, 3위" 순서로 말했으면 순위 발표가 아니라 번호 나열
+        rank = _rank_list(words, expected)
+        if not rank or sum(1 for it in rank[1] if it.time is not None) <= ascending[0]:
+            return "ordinal", ascending[0], ascending[1]
     for style, finder in (("rank", _rank_list), ("ordinal", _ordinal_list)):
         found = finder(words, expected)
         if found:
@@ -225,6 +272,12 @@ def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str
         text = re.sub(r"\s*(정리해\s*보자|알려\s*줄게|알려\s*드릴게요).*$", "", text)
     if len(text) > 30:  # 두 줄(한 줄 17자 안팎)에 들어가게
         text = text[:30].rsplit(" ", 1)[0]
+    text = re.sub(r"^[1-7]\s*위\s*,?\s*", "", text)  # 앞에 잘못 들어간 "2위," 같은 말
+    # "…이유가 뭐예요?" → "…이유 5가지" (레퍼런스: "병원이 노동청 신고 많이 당하는 이유 5가지")
+    if style in ("rank", "ordinal") and count:
+        m = re.search(r"\s*(이|가|는|은)?\s*뭐(예요|에요|야|일까요?|가 있을까)$", text)
+        if m:
+            text = text[: m.start()] + f" {count}가지"
     # "…이유 5가지"처럼 개수를 이미 말한 제목에는 TOP N을 붙이지 않는다
     has_count = re.search(r"([0-9]+|두|세|네|다섯|여섯|일곱)\s*가지", text)
     return f"{text} TOP {count}" if style == "rank" and not has_count else text
