@@ -30,11 +30,12 @@ jobs:
             python -m reels_auto "$f" --no-render --dump /tmp/p.json
             python -c "import json; p=json.load(open('/tmp/p.json')); print(' / '.join(c['text'] for c in p['captions']))"
           done
-      - name: 렌더링 (목록형 / 질문·답변형)
+      - name: 렌더링 (목록형 / 질문·답변형 / 퀴즈형 / 티어리스트)
         run: |
           python -m reels_auto reference/근로계약서.mp4 -o /tmp/out1.mp4
           python -m reels_auto "reference/1. 알바 직장내괴롭힘.mp4" -o /tmp/out2.mp4
-          python -m reels_auto reference/5.*.mp4 -o /tmp/out3.mp4
+          python -m reels_auto "$(python tools/find_ref.py 퀴즈)" -o /tmp/out3.mp4
+          python -m reels_auto "$(python tools/find_ref.py "티어 1편")" -o /tmp/out4.mp4
 
   build:
     name: Windows exe 만들기
@@ -68,7 +69,7 @@ jobs:
         timeout-minutes: 20
         run: |
           # 퀴즈형 영상으로 테스트 (스티커·카드·O/X 그림까지 exe 안에서 제대로 쓰이는지 확인)
-          ./dist/ReelsAuto/ReelsAuto.exe reference/5.*.mp4 -o "$PWD/테스트_결과.mp4"
+          ./dist/ReelsAuto/ReelsAuto.exe "$(python tools/find_ref.py 퀴즈)" -o "$PWD/테스트_결과.mp4"
           ls -la 테스트_결과.mp4
           ./dist/ReelsAuto/bin/ffmpeg.exe -hide_banner -i 테스트_결과.mp4 2>&1 | grep -E "Duration|Stream" || true
       - name: 압축
