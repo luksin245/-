@@ -65,6 +65,7 @@ class Project:
     bgm_volume: float = 0.18
     face_box: list[int] | None = None  # 출력 화면 기준 얼굴 상자 [x, y, w, h]
     retouch: str = "약하게"  # 피부 보정: 끄기/약하게/보통/강하게
+    punch_zoom: bool = True  # 컷마다 살짝 확대/원래 크기 번갈아
     slim: str = "약하게"  # 얼굴형 갸름하게: 끄기/약하게/보통/강하게
     stickers: list[Sticker] = field(default_factory=list)  # 말에 맞춰 잠깐 튀어나오는 그림
     quiz: list[QuizItem] = field(default_factory=list)  # 퀴즈형일 때 문제별 카드와 정답

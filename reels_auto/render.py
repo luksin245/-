@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from . import face, quiz, stickers
+from . import face, quiz, stickers, zoom
 from .ass import build_ass
 from .cutter import FPS
 from .media import run_ffmpeg
@@ -25,6 +25,7 @@ def build_filter(p: Project, face_graph: str, sticker_graph: str) -> str:
         # 픽셀이 정사각형이 아닌 영상(SAR≠1)도 실제 보이는 비율대로 세로 화면에 맞춘다
         f"[0:v]fps={FPS},select='{keep}',setpts=N/{FPS}/TB,{face.FIT}[vfit]",
         face_graph,
+        zoom.build_graph(p.segments, p.face_box, "vface", "vzoom") if p.punch_zoom else "[vface]null[vzoom]",
         sticker_graph,
         "[vstk]subtitles=f=subs.ass:fontsdir=fonts,format=yuv420p[vout]",
         f"[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
@@ -66,7 +67,7 @@ def render(p: Project, output: str, on_progress: Callable[[float], None] | None 
         pictures = stickers.sticker_overlays(p.stickers)
         if p.list_style == "quiz":
             pictures += quiz.overlays(p.quiz)
-        sticker_graph, sticker_files = stickers.build_graph(pictures, "vface", "vstk", first_extra + len(images))
+        sticker_graph, sticker_files = stickers.build_graph(pictures, "vzoom", "vstk", first_extra + len(images))
         for img in [*images, *sticker_files]:
             args += ["-i", img]
         (work / "graph.txt").write_text(build_filter(p, face_graph, sticker_graph), encoding="utf-8")

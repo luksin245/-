@@ -31,6 +31,7 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--retouch", choices=["끄기", "약하게", "보통", "강하게"])
     ap.add_argument("--slim", choices=["끄기", "약하게", "보통", "강하게"])
     ap.add_argument("--no-stickers", action="store_true")
+    ap.add_argument("--no-zoom", action="store_true", help="컷마다 확대 효과 끄기")
     ap.add_argument("--title-font", choices=list(TITLE_FONTS), help="제목 글꼴")
     ap.add_argument("--keep-ng", action="store_true", help="다시 말한 부분(NG)을 빼지 않음")
     a = ap.parse_args(argv)
@@ -55,6 +56,8 @@ def cli(argv: list[str]) -> int:
         p.slim = a.slim
     if a.no_stickers:
         p.stickers = []
+    if a.no_zoom:
+        p.punch_zoom = False
     if a.title_font:
         p.title_font = a.title_font
     if a.dump:

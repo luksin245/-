@@ -127,6 +127,8 @@ class App:
         ttk.Label(faces, text="얼굴형 갸름하게").grid(row=1, column=0, sticky="w")
         self.slim_var = tk.StringVar(value=DEFAULT_SLIM)
         ttk.Combobox(faces, textvariable=self.slim_var, values=list(SLIM_LEVELS), state="readonly", width=8).grid(row=1, column=1, padx=6, pady=2)
+        self.zoom_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(left, text="컷마다 살짝 확대 (끊긴 티 덜 나게)", variable=self.zoom_var).pack(anchor="w", pady=(6, 0))
         self.face_note = ttk.Label(left, text="", foreground="#666")
         self.face_note.pack(anchor="w")
 
@@ -229,6 +231,7 @@ class App:
         self.title_text.delete("1.0", "end")
         self.title_text.insert("1.0", p.title)
         self.title_font_var.set(p.title_font if p.title_font in TITLE_FONTS else DEFAULT_TITLE_FONT)
+        self.zoom_var.set(p.punch_zoom)
         self.style_var.set(STYLE_LABELS.get(p.list_style, STYLE_LABELS["none"]))
         self.count_var.set(p.list_count if p.list_count >= 2 else 5)
         by_slot = {it.rank: it for it in p.items}
@@ -281,6 +284,7 @@ class App:
         p.bgm = self.bgm_paths.get(choice) if choice not in (NO_BGM, PICK_BGM) else None
         p.bgm_volume = float(self.vol_var.get())
         p.title_font = self.title_font_var.get()
+        p.punch_zoom = bool(self.zoom_var.get())
         p.retouch = self.retouch_var.get()
         p.slim = self.slim_var.get()
         p.stickers = self._read_stickers(p)
