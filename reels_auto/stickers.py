@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from .paths import app_dir
@@ -33,7 +34,7 @@ def names() -> list[str]:
     return sorted(p.stem for p in stickers_dir().glob("*.png")) if stickers_dir().exists() else []
 
 
-def _match(text: str, table: dict[str, list[str]]) -> str | None:
+def match(text: str, table: dict[str, list[str]]) -> str | None:
     """자막에서 가장 긴(구체적인) 키워드를 가진 스티커를 고른다."""
     best, best_len = None, 0
     compact = text.replace(" ", "")
@@ -52,13 +53,13 @@ def auto_stickers(captions: list[Caption], duration: float) -> list[Sticker]:
     for i, c in enumerate(captions):
         if c.start < free_at:
             continue
-        name = _match(c.text, table)
+        name = match(c.text, table)
         if not name or c.start - last_used.get(name, -99) < SAME_AGAIN:
             continue
         # 같은 이야기가 이어지는 동안(최대 MAX_SHOW초) 보여준다
         end = c.start + MIN_SHOW
         for nxt in captions[i + 1:]:
-            if nxt.start >= c.start + MAX_SHOW or _match(nxt.text, table) not in (None, name):
+            if nxt.start >= c.start + MAX_SHOW or match(nxt.text, table) not in (None, name):
                 break
             end = max(end, min(nxt.end, c.start + MAX_SHOW))
         end = min(end, duration)
@@ -70,21 +71,46 @@ def auto_stickers(captions: list[Caption], duration: float) -> list[Sticker]:
     return out
 
 
-def build_graph(stickers: list[Sticker], label_in: str, label_out: str, first_input: int) -> tuple[str, list[str]]:
-    """[label_in] 위에 스티커들을 차례로 올린 그래프 조각과, 추가로 넣을 이미지 파일 목록."""
+@dataclass
+class Overlay:
+    """영상 위에 올릴 그림 한 장."""
+    path: str
+    start: float
+    end: float
+    cx: int  # 중심 위치
+    cy: int
+    width: int
+    height: int | None = None  # 주면 그 크기로 꽉 차게 잘라 맞춤(사진용)
+    pop: bool = True  # 톡 튀어나오는 효과
+
+
+def sticker_overlays(stickers: list[Sticker]) -> list[Overlay]:
+    return [Overlay(str(stickers_dir() / f"{s.name}.png"), s.start, s.end, CENTER[0], CENTER[1], SIZE)
+            for s in stickers]
+
+
+def build_graph(overlays: list[Overlay], label_in: str, label_out: str, first_input: int) -> tuple[str, list[str]]:
+    """[label_in] 위에 그림들을 차례로 올린 그래프 조각과, 추가로 넣을 이미지 파일 목록."""
     parts: list[str] = []
     files: list[str] = []
     cur = label_in
-    for k, st in enumerate(s for s in stickers if (stickers_dir() / f"{s.name}.png").exists()):
-        a, b = st.start, st.end
-        # 톡 튀어나오는 효과(0.6배 → 1.1배 → 1배)를 8프레임짜리 짧은 클립으로 만들고, 마지막 프레임을 계속 보여준다
-        scale = "if(lt(t,0.12),0.6+0.5*t/0.12,if(lt(t,0.22),1.1-0.1*(t-0.12)/0.1,1))"
+    for k, ov in enumerate(o for o in overlays if Path(o.path).exists() and o.end > o.start):
+        a, b = ov.start, ov.end
         idx = first_input + len(files)
-        files.append(str(stickers_dir() / f"{st.name}.png"))
-        parts.append(f"[{idx}:v]format=rgba,loop=loop=7:size=1,setpts=N/30/TB,"
-                     f"scale=w='trunc({SIZE}*{scale}/2)*2':h=-2:eval=frame,setpts=PTS+{a:.3f}/TB[stk{k}]")
-        nxt = f"vstk{k}"
-        parts.append(f"[{cur}][stk{k}]overlay=x='{CENTER[0]}-overlay_w/2':y='{CENTER[1]}-overlay_h/2':"
+        files.append(ov.path)
+        if ov.height:
+            fit = (f"scale={ov.width}:{ov.height}:force_original_aspect_ratio=increase,"
+                   f"crop={ov.width}:{ov.height},setsar=1")
+        else:
+            fit = f"scale={ov.width}:-2,setsar=1"
+        chain = f"[{idx}:v]format=rgba,{fit}"
+        if ov.pop:
+            # 톡 튀어나오는 효과(0.6배 → 1.1배 → 1배)를 8프레임짜리 짧은 클립으로 만들고, 마지막 프레임을 계속 보여준다
+            pop = "if(lt(t,0.12),0.6+0.5*t/0.12,if(lt(t,0.22),1.1-0.1*(t-0.12)/0.1,1))"
+            chain += f",loop=loop=7:size=1,setpts=N/30/TB,scale=w='trunc(iw*{pop}/2)*2':h=-2:eval=frame"
+        parts.append(f"{chain},setpts=PTS+{a:.3f}/TB[ov{k}]")
+        nxt = f"vov{k}"
+        parts.append(f"[{cur}][ov{k}]overlay=x='{ov.cx}-overlay_w/2':y='{ov.cy}-overlay_h/2':"
                      f"enable='between(t,{a:.3f},{b:.3f})':eval=frame:eof_action=repeat[{nxt}]")
         cur = nxt
     parts.append(f"[{cur}]null[{label_out}]")

@@ -19,7 +19,8 @@ from .paths import bgm_dir
 from .project import Project
 
 NO_BGM = "(BGM 없음)"
-STYLE_LABELS = {"none": "표시 안 함", "rank": "순위형 (TOP N · 아래부터)", "ordinal": "나열형 (N가지 · 위부터)"}
+STYLE_LABELS = {"none": "표시 안 함", "rank": "순위형 (TOP N · 아래부터)", "ordinal": "나열형 (N가지 · 위부터)",
+                "quiz": "퀴즈형 (O/X 카드)"}
 PICK_BGM = "직접 고르기..."
 
 
@@ -30,8 +31,8 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.busy = False
         root.title(f"릴스 자동 편집 v{__version__}")
-        root.geometry("1040x860")
-        root.minsize(900, 780)
+        root.geometry("1040x940")
+        root.minsize(900, 860)
         self._build()
         self._set_enabled(False)
         root.after(100, self._poll)
@@ -133,7 +134,11 @@ class App:
         ttk.Label(right, text="그림 스티커 (한 줄에 '나타나는 시점(초) 이름' · 줄을 지우면 안 나와요)").pack(anchor="w", pady=(8, 0))
         self.sticker_text = tk.Text(right, height=5, font=("Malgun Gothic", 11), wrap="none", undo=True)
         self.sticker_text.pack(fill="x")
-        ttk.Label(right, text="쓸 수 있는 이름: " + ", ".join(sticker_names()), wraplength=500,
+        ttk.Label(right, text="퀴즈 카드 (한 줄에 '문제 시작 · 정답 공개(초) · O/X · 그림')").pack(anchor="w", pady=(8, 0))
+        self.quiz_text = tk.Text(right, height=4, font=("Malgun Gothic", 11), wrap="none", undo=True)
+        self.quiz_text.pack(fill="x")
+        ttk.Label(right, text="그림 자리에는 아래 스티커 이름이나 사진 파일 경로(예: C:/사진/카톡.png)를 쓸 수 있어요.\n"
+                              "쓸 수 있는 이름: " + ", ".join(sticker_names()), wraplength=500,
                   foreground="#666").pack(anchor="w")
 
         bottom = ttk.Frame(self.root)
@@ -161,7 +166,7 @@ class App:
 
     def _set_enabled(self, on: bool) -> None:
         state = "normal" if on else "disabled"
-        for w in [self.title_text, self.sub_text, self.sticker_text, self.render_btn, *self.item_widgets]:
+        for w in [self.title_text, self.sub_text, self.sticker_text, self.quiz_text, self.render_btn, *self.item_widgets]:
             w.configure(state=state)
 
     def _style(self) -> str:
@@ -172,7 +177,7 @@ class App:
         style, count = self._style(), int(self.count_var.get())
         for w in (*self.item_head, *[x for r in self.item_rows.values() for x in r]):
             w.grid_remove()
-        if style == "none":
+        if style in ("none", "quiz"):
             return
         for col, w in enumerate(self.item_head):
             w.grid(row=0, column=col)
@@ -226,6 +231,8 @@ class App:
         self.retouch_var.set(p.retouch)
         self.slim_var.set(p.slim)
         self.face_note.configure(text="얼굴을 찾았어요" if p.face_box else "얼굴을 못 찾아서 밝기·혈색만 보정해요")
+        self.quiz_text.delete("1.0", "end")
+        self.quiz_text.insert("1.0", "\n".join(f"{q.start:.2f} {q.reveal:.2f} {q.answer} {q.image}" for q in p.quiz))
         self.sticker_text.delete("1.0", "end")
         self.sticker_text.insert("1.0", "\n".join(f"{x.start:.2f} {x.name}" for x in p.stickers))
         self.status.configure(text=f"분석 끝: {p.duration:.1f}초 · 컷 {len(p.segments)}개")
@@ -255,6 +262,7 @@ class App:
         p.retouch = self.retouch_var.get()
         p.slim = self.slim_var.get()
         p.stickers = self._read_stickers(p)
+        p.quiz = self._read_quiz(p)
         return p
 
     def _read_stickers(self, p: Project) -> list:
@@ -277,6 +285,32 @@ class App:
             old = known.get((round(start, 2), name))
             out.append(old or Sticker(start, min(start + 2.5, p.duration), name))
         return out
+
+    def _read_quiz(self, p: Project) -> list:
+        from .project import QuizItem
+
+        rows = []
+        for n, raw in enumerate(self.quiz_text.get("1.0", "end").splitlines(), start=1):
+            parts = raw.split(maxsplit=3)
+            if not parts:
+                continue
+            try:
+                start, reveal = float(parts[0]), float(parts[1])
+                answer = parts[2].upper()
+                image = parts[3].strip() if len(parts) > 3 else "물음표"
+            except (ValueError, IndexError):
+                raise ValueError(f"퀴즈 {n}번째 줄: '문제 시작 정답 공개 O/X 그림' 순서로 적어주세요 (예: 1.5 4.8 O 휴대폰)")
+            if answer not in ("O", "X"):
+                raise ValueError(f"퀴즈 {n}번째 줄: 정답은 O 또는 X로 적어주세요")
+            if not Path(image).suffix and image not in sticker_names():
+                raise ValueError(f"퀴즈 {n}번째 줄: '{image}' 그림이 없어요. 스티커 이름이나 사진 파일 경로를 써주세요.")
+            rows.append([start, reveal, answer, image])
+        rows.sort(key=lambda r: r[0])
+        items = []
+        for i, (start, reveal, answer, image) in enumerate(rows):
+            end = rows[i + 1][0] - 0.05 if i + 1 < len(rows) else p.duration
+            items.append(QuizItem(start, max(reveal, start), end, answer, image))
+        return items
 
     def start_render(self) -> None:
         if self.busy or self.project is None:

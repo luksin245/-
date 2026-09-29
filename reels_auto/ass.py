@@ -13,18 +13,21 @@ SUB_FONT = "Pretendard Medium"
 LIST_FONT = "Pretendard SemiBold"
 
 TITLE_TOP_Y = 248
-# 목록 패널: 아래쪽 끝(자막 바로 위)을 고정하고 줄 수에 따라 위로 늘어난다. 5줄일 때 레퍼런스와 같다.
-PANEL_X0, PANEL_X1, PANEL_BOTTOM = 80, 1000, 1456
-PANEL_PAD_TOP, PANEL_PAD_BOTTOM = 78, 56  # 첫 줄/마지막 줄 중심에서 패널 끝까지
+# 목록 패널: 크기는 항상 같고(레퍼런스 5줄 기준), 줄들을 패널 안 가운데에 모은다.
+# (레퍼런스의 3가지 영상도 같은 크기 패널에 3줄이 가운데 정렬돼 있다)
+PANEL = (80, 906, 1000, 1456)  # x0, y0, x1, y1
+ROWS_CENTER = 1192  # 5줄일 때 첫 줄 984, 마지막 줄 1400의 가운데
 PANEL_RADIUS = 28
 
 
 def panel_layout(count: int) -> tuple[tuple[int, int, int, int], list[int]]:
     """(패널 x0, y0, x1, y1), 각 줄의 세로 중심 목록 (1번이 맨 위)."""
-    step = 104 if count <= 5 else int(104 * 4 / (count - 1))  # 6줄 이상이면 간격을 좁혀 얼굴을 가리지 않게
-    y0 = PANEL_BOTTOM - PANEL_PAD_BOTTOM - (count - 1) * step - PANEL_PAD_TOP
-    rows = [y0 + PANEL_PAD_TOP + i * step for i in range(count)]
-    return (PANEL_X0, y0, PANEL_X1, PANEL_BOTTOM), rows
+    step = 104 if count <= 5 else int(104 * 4 / (count - 1))  # 6줄 이상이면 간격을 좁혀 패널 안에 맞춘다
+    # 레퍼런스 측정값: 5줄이면 가운데 1192, 3줄이면 1168 (줄이 적을수록 살짝 위로)
+    center = ROWS_CENTER - max(0, 5 - count) * 12
+    top = center - (count - 1) * step / 2
+    return PANEL, [int(top + i * step) for i in range(count)]
+
 
 NUM_X, ITEM_X = 110, 178
 CAPTION_Y = 1500
@@ -69,8 +72,9 @@ def wrap_title(title: str, max_line: int = 17) -> str:
     spaces = [i for i, ch in enumerate(title) if ch == " "]
     if not spaces:
         return title
-    mid = len(title) / 2
-    cut = min(spaces, key=lambda i: abs(i - mid))
+    # 레퍼런스 제목은 첫 줄이 조금 더 길다 ("연차 못 쓰게 하는 사장님들이 / 가장 많이 하는 말 TOP 5")
+    target = len(title) * 0.57
+    cut = min((i for i in spaces if i <= max_line) or spaces, key=lambda i: abs(i - target))
     return title[:cut] + "\n" + title[cut + 1:]
 
 
@@ -89,7 +93,7 @@ def build_ass(p: Project) -> str:
     out = [HEADER]
     end = p.duration
     count = min(max(p.list_count, 0), 7)
-    show_list = p.list_style != "none" and count >= 2
+    show_list = p.list_style in ("rank", "ordinal") and count >= 2
 
     if p.title.strip():
         out.append(line(3, 0, end, "Title", f"{{\\an8\\pos({W // 2},{TITLE_TOP_Y})}}" + esc(wrap_title(p.title))))

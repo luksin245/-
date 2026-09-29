@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from . import face, stickers
+from . import face, quiz, stickers
 from .ass import build_ass
 from .cutter import FPS
 from .media import run_ffmpeg
@@ -59,7 +59,10 @@ def render(p: Project, output: str, on_progress: Callable[[float], None] | None 
             args += ["-stream_loop", "-1", "-i", str(Path(p.bgm).resolve())]
         first_extra = 2 if p.bgm else 1
         face_graph, images = face.build_graph(str(work), p.retouch, p.slim, p.face_box, first_extra)
-        sticker_graph, sticker_files = stickers.build_graph(p.stickers, "vface", "vstk", first_extra + len(images))
+        pictures = stickers.sticker_overlays(p.stickers)
+        if p.list_style == "quiz":
+            pictures += quiz.overlays(p.quiz)
+        sticker_graph, sticker_files = stickers.build_graph(pictures, "vface", "vstk", first_extra + len(images))
         for img in [*images, *sticker_files]:
             args += ["-i", img]
         (work / "graph.txt").write_text(build_filter(p, face_graph, sticker_graph), encoding="utf-8")

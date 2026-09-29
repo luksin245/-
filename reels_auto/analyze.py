@@ -209,6 +209,8 @@ def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str
     # "노무사님, …" 처럼 부르는 말로 시작하면 떼어낸다
     text = re.sub(r"^\S*(님|씨|선생)[,!]?\s+", "", text)
     text = re.sub(r"\s*(TOP|탑)\s*[0-9].*$", "", text, flags=re.I)
+    if "퀴즈" in text:  # "일상 근로 상식 퀴즈 풀어보자" → "일상 근로 상식 퀴즈"
+        text = text[: text.index("퀴즈") + 2]
     if style == "rank":
         text = re.sub(r"\s*(정리해\s*보자|알려\s*줄게|알려\s*드릴게요).*$", "", text)
     if len(text) > 30:  # 두 줄(한 줄 17자 안팎)에 들어가게
