@@ -15,7 +15,7 @@ from checks import (MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_requ
 from law_changes import (detect_base_date, draft_new_article, fmt, is_relevant, law_changes,
                          load_history, related_articles, short_name)
 from law_db import LawDB
-from revision import DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, to_docx
+from revision import DELETE, FONTS, NEW, compare_rows, to_rules_docx, diff_html, diff_segments, draft_rows, to_docx
 from rule_parser import extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
@@ -24,6 +24,12 @@ ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", RE
 LAWS_DIR = Path(__file__).resolve().parent / "laws"
 
 st.set_page_config(page_title="취업규칙 검토", page_icon="📋", layout="wide")
+# 화면 글자 크기: Streamlit은 대부분 rem 단위를 쓰므로 기준 크기만 키우면 전체가 커진다
+st.markdown("""<style>
+html { font-size: 19px; }
+.stMarkdown p, .stMarkdown li, .stText, .stCaption, .stTextArea textarea, .stTextInput input { font-size: 1rem; }
+.stTabs [data-baseweb="tab"] p { font-size: 1.05rem; }
+</style>""", unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -238,17 +244,35 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
 
     final = edit_rows(rows, prefix)
     st.divider()
-    title = st.text_input("문서 제목", "취업규칙 신구대조표")
-    c1, c2, c3 = st.columns(3)
-    font = c1.selectbox("글꼴", FONTS, help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
-    with_reason = c2.checkbox("비고에 개정 사유 넣기", value=True)
-    highlight = c3.checkbox("바뀐 부분 밑줄 표시", value=False)
-    st.write(f"신구대조표에 들어갈 조항: {len(final)}개")
-    if final:
-        st.download_button("📥 신구대조표 Word(.docx) 다운로드",
+    base_name = file_name.rsplit(".", 1)[0]
+    docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    font = st.selectbox("글꼴 (두 문서 공통)", FONTS,
+                        help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
+    st.write(f"반영할 조항: {len(final)}개")
+    if not final:
+        return final
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("📄 신구대조표")
+        st.caption("현행 / 개정 안 / 비고 3칸 표 (A4 가로)")
+        title = st.text_input("신구대조표 제목", "취업규칙 신구대조표")
+        with_reason = st.checkbox("비고에 개정 사유 넣기", value=True)
+        highlight = st.checkbox("바뀐 부분 밑줄 표시", value=False)
+        st.download_button("📥 신구대조표 다운로드 (.docx)",
                            data=to_docx(final, title, font=font, highlight=highlight, with_reason=with_reason),
-                           file_name=f"{file_name.rsplit('.', 1)[0]}_신구대조표.docx",
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                           file_name=f"{base_name}_신구대조표.docx", mime=docx_mime, use_container_width=True)
+    with right:
+        st.subheader("📘 개정 취업규칙 초안")
+        if mode.startswith("점검"):
+            st.caption("현행 취업규칙 전체에 위 개정 내용을 반영한 문서 (A4 세로). 신설 조항은 본칙 끝에 이어 붙고 새 부칙이 추가됩니다.")
+            rules_title = st.text_input("초안 제목", "취업규칙 (개정안)")
+            mark = st.checkbox("개정·신설 조항을 색으로 표시", value=True)
+            st.download_button("📥 개정 취업규칙 초안 다운로드 (.docx)",
+                               data=to_rules_docx(articles, final, rules_title, font=font, mark=mark),
+                               file_name=f"{base_name}_개정안.docx", mime=docx_mime, use_container_width=True)
+        else:
+            st.caption("개정본 PDF와 비교하는 경우에는 올린 개정본이 곧 초안이므로 따로 만들지 않습니다.")
     return final
 
 

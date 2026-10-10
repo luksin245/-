@@ -134,10 +134,14 @@ def _append_item(text, sentence):
     return f"{text}\n{sentence}"
 
 
+def _required_basis(no):
+    return f"근로기준법 제93조 제{no}호" if no[0].isdigit() else f"표준취업규칙 {no}"
+
+
 def draft_rows(articles, required, findings):
     """점검 결과로 신구대조표 초안을 만든다."""
     by_label = {a["조항"]: a for a in articles}
-    changed = {}  # 조항 → [개정안, 사유 목록]
+    changed = {}  # 조항 → [개정안, 사유 목록, {원래 문장: 고친 문장}]
     new_rows = []
 
     for f in findings:
@@ -151,27 +155,30 @@ def draft_rows(articles, required, findings):
         article = by_label.get(f["조항"])
         if not article:
             continue
-        entry = changed.setdefault(article["조항"], [article["내용"], []])
+        entry = changed.setdefault(article["조항"], [article["내용"], [], {}])
         if "pattern" in fix or "subs" in fix:
-            fixed = f["발췌"]
+            # 같은 문장에 고칠 곳이 여럿이면 앞에서 고친 문장에 이어서 고친다
+            current = entry[2].get(f["발췌"], f["발췌"])
+            fixed = current
             for pattern, repl in fix.get("subs", [(fix.get("pattern"), fix.get("repl"))]):
                 fixed = _sub_once(pattern, repl, fixed)
-            if fixed == f["발췌"] or f["발췌"] not in entry[0]:
+            if fixed == current or current not in entry[0]:
                 continue
-            entry[0] = entry[0].replace(f["발췌"], fixed, 1)
+            entry[0] = entry[0].replace(current, fixed, 1)
+            entry[2][f["발췌"]] = fixed
         else:
             entry[0] = _append_item(entry[0], fix["add"])
         entry[1].append(reason)
 
     rows = [_row(CHANGE, label, by_label[label]["내용"], text, "\n".join(reasons))
-            for label, (text, reasons) in changed.items()]
+            for label, (text, reasons, _) in changed.items()]
     rows.sort(key=lambda r: articles.index(by_label[r["조항"]]))
 
     for item in required:
         for d in item["세부"]:
             if not d["조항"] and d["세부"] in TEMPLATES:
                 new_rows.append(_row(NEW, "", "", TEMPLATES[d["세부"]],
-                                     f"필수 기재사항 누락: {d['세부']}(근로기준법 제93조 제{item['번호']}호)"))
+                                     f"필수 기재사항 누락: {d['세부']}({_required_basis(item['번호'])})"))
     return rows + new_rows
 
 
@@ -249,7 +256,7 @@ def diff_html(segments):
 # Word 내보내기 (A4 가로, 제목 상자 + 현행/개정 안/비고 3칸 표)
 # ---------------------------------------------------------------------------
 FONTS = ("함초롬바탕", "바탕", "맑은 고딕")
-HEADING = re.compile(r"^(제\s*[\d○]+\s*조(?:\s*의\s*\d+)?)\s*(\([^)]*\))?\s*(.*)$", re.S)
+HEADING = re.compile(r"^(제\s*[\d○]+\s*조(?:\s*의\s*\d+)?)\s*([(（【\[][^)）】\]]*[)）】\]])?\s*(.*)$", re.S)
 ITEM_INDENT = [  # (문단 시작 패턴, 왼쪽 들여쓰기 cm) — 둘째 줄부터 글머리 뒤에 맞춘다
     (re.compile(rf"^[{''.join(CIRCLED)}]"), 0.45),
     (re.compile(r"^\d+\.\s"), 0.9),
@@ -398,6 +405,96 @@ def to_docx(rows, title="취업규칙 신구대조표", font=FONTS[0], highlight
     if highlight:
         note = doc.add_paragraph()
         _font(note.add_run("※ 밑줄 친 부분이 바뀐 내용입니다."), font, size - 1)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# 개정 취업규칙 초안 (현행 전체에 신구대조표 내용을 반영한 Word 문서)
+# ---------------------------------------------------------------------------
+CHANGED_COLOR = RGBColor(0x1F, 0x4E, 0xB4)  # 개정 조항: 파란색
+NEW_COLOR = RGBColor(0x2E, 0x7D, 0x32)      # 신설 조항: 초록색
+
+
+def _heading_line(doc, text, font, size):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(10)
+    p.paragraph_format.space_after = Pt(4)
+    _font(p.add_run(text), font, size, bold=True)
+
+
+def _write_article(doc, text, font, size, color=None):
+    laid, has_heading = _layout(text)
+    for i, line in enumerate(laid.split("\n")):
+        p = doc.add_paragraph()
+        _tight(p)
+        p.paragraph_format.line_spacing = 1.3
+        _indent(p, line)
+        run = p.add_run(line)
+        _font(run, font, size, bold=has_heading and i == 0)
+        if color is not None:
+            run.font.color.rgb = color
+    p.paragraph_format.space_after = Pt(8)
+
+
+def _article_no(label):
+    m = re.match(r"제(\d+)조", label or "")
+    return int(m.group(1)) if m else 0
+
+
+def to_rules_docx(articles, rows, title="취업규칙 (개정안)", font=FONTS[0], mark=True, size=10.5):
+    """현행 취업규칙 전체에 개정·삭제·신설 내용을 반영한 초안.
+    신설 조항은 본칙 끝에 이어 번호를 매기고, 끝에 새 부칙을 붙인다."""
+    doc = Document()
+    section = doc.sections[0]
+    section.page_width, section.page_height = Cm(21.0), Cm(29.7)
+    for side, cm in (("left_margin", 2.5), ("right_margin", 2.5), ("top_margin", 2.0), ("bottom_margin", 2.0)):
+        setattr(section, side, Cm(cm))
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(12)
+    _font(p.add_run(title), font, 18, bold=True)
+    if mark:
+        note = doc.add_paragraph()
+        _font(note.add_run("※ 파란색은 개정한 조항, 초록색은 신설한 조항입니다. 확인한 뒤 글자색을 검정으로 바꿔 사용하세요."),
+              font, size - 1.5)
+
+    changed = {r["조항"]: r for r in rows if r["조항"] and r["구분"] in (CHANGE, DELETE)}
+    body = [a for a in articles if not a["부칙"]]
+    addenda = [a for a in articles if a["부칙"]]
+
+    chapter = None
+    for a in body:
+        if a["장"] and a["장"] != chapter:
+            chapter = a["장"]
+            _heading_line(doc, chapter, font, size + 1)
+        row = changed.get(a["조항"])
+        if row is None:
+            _write_article(doc, a["내용"], font, size)
+        elif row["구분"] == DELETE:
+            _write_article(doc, f"{a['조항']} 삭제", font, size, CHANGED_COLOR if mark else None)
+        else:
+            _write_article(doc, row["개정안"], font, size, CHANGED_COLOR if mark else None)
+
+    next_no = max((_article_no(a["조항"]) for a in body), default=0) + 1
+    new_rows = [r for r in rows if r["구분"] == NEW]
+    if new_rows:
+        if mark:
+            _heading_line(doc, "신설 조항 (알맞은 장으로 옮기고 조 번호를 정리하세요)", font, size + 1)
+        for r in new_rows:
+            text = re.sub(r"^제\s*○\s*조", f"제{next_no}조", r["개정안"].strip())
+            _write_article(doc, text, font, size, NEW_COLOR if mark else None)
+            next_no += 1
+
+    if addenda:
+        _heading_line(doc, "부 칙", font, size + 1)
+        for a in addenda:
+            _write_article(doc, a["내용"], font, size)
+    _heading_line(doc, "부 칙 (○○○○. ○. ○.)", font, size + 1)
+    _write_article(doc, "이 규칙은 ○○○○년 ○월 ○일부터 시행한다.", font, size, NEW_COLOR if mark else None)
 
     buf = io.BytesIO()
     doc.save(buf)
