@@ -127,7 +127,12 @@ def check_required(articles):
 # ---------------------------------------------------------------------------
 # 2. 위반 점검
 # ---------------------------------------------------------------------------
-def _finding(topic, status, basis, explain, article=None, excerpt=""):
+def _finding(topic, status, basis, explain, article=None, excerpt="", fix=None):
+    """fix: 신구대조표 초안에 쓸 개정 방법.
+    {"pattern", "repl"}: 발췌 문장에서 pattern을 repl로 한 번 바꾼다
+    {"add"}: 조항 끝에 문장을 덧붙인다
+    {"new"}: 조항을 새로 만든다
+    """
     return {
         "주제": topic,
         "상태": status,
@@ -135,7 +140,13 @@ def _finding(topic, status, basis, explain, article=None, excerpt=""):
         "발췌": excerpt,
         "설명": explain,
         "근거": basis,  # [(법령명, 조문), ...]
+        "fix": fix,
     }
+
+
+def _swap(value, unit, new):
+    """발췌 문장의 '{value}{unit}'(사이 공백 허용)을 new로 바꾸는 fix."""
+    return {"pattern": rf"(?<![\d.]){value}\s*{unit}", "repl": new}
 
 
 def _sentences_with(articles, keywords, exclude=()):
@@ -151,6 +162,10 @@ def _sentences_with(articles, keywords, exclude=()):
 
 def _ints(pattern, text):
     return [int(x) for x in re.findall(pattern, text)]
+
+
+# 원문(공백 포함)에서 비율 표현 하나를 찾는 패턴
+RATIO = r"(?:\d+\s*분의\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?\s*(?:%|퍼센트|프로))"
 
 
 def _ratios(text):
@@ -169,11 +184,13 @@ def check_working_hours(articles):
         for h in _ints(r"1주(?:간|일)?[^\d]{0,25}?(\d+)시간", n):
             if h > 40:
                 out.append(_finding("1주 근로시간", VIOLATION, basis,
-                                    f"1주 소정근로시간 {h}시간이 법정 한도(40시간)를 넘습니다. 탄력적 근로시간제 등 예외 요건을 갖췄는지 확인하세요.", a, s))
+                                    f"1주 소정근로시간 {h}시간이 법정 한도(40시간)를 넘습니다. 탄력적 근로시간제 등 예외 요건을 갖췄는지 확인하세요.", a, s,
+                                    _swap(h, "시간", "40시간")))
         for h in _ints(r"1일[^\d]{0,25}?(\d+)시간", n):
             if h > 8:
                 out.append(_finding("1일 근로시간", VIOLATION, basis,
-                                    f"1일 소정근로시간 {h}시간이 법정 한도(8시간)를 넘습니다.", a, s))
+                                    f"1일 소정근로시간 {h}시간이 법정 한도(8시간)를 넘습니다.", a, s,
+                                    _swap(h, "시간", "8시간")))
     return out
 
 
@@ -187,11 +204,13 @@ def check_overtime(articles):
         for h in _ints(r"1주(?:간|일)?[^\d]{0,25}?(\d+)시간", n):
             if h > 12:
                 out.append(_finding("연장근로 한도", VIOLATION, basis,
-                                    f"1주 연장근로 {h}시간이 한도(12시간)를 넘습니다.", a, s))
+                                    f"1주 연장근로 {h}시간이 한도(12시간)를 넘습니다.", a, s,
+                                    _swap(h, "시간", "12시간")))
     if not any("합의" in n or "동의" in n for _, _, n in hits):
         a, s, _ = hits[0]
         out.append(_finding("연장근로 합의", REVIEW, basis,
-                            "연장근로는 근로자와 합의(동의)가 있어야 합니다. 합의 절차가 규정에 있는지 확인하세요.", a, s))
+                            "연장근로는 근로자와 합의(동의)가 있어야 합니다. 합의 절차가 규정에 있는지 확인하세요.", a, s,
+                            {"add": "연장근로는 직원과 합의한 경우에 한하여 1주 12시간을 한도로 실시한다."}))
     return out
 
 
@@ -204,7 +223,8 @@ def check_break(articles):
     if ("4시간" in t and "30분" in t) and ("8시간" in t and "1시간" in t):
         return [_finding("휴게시간", OK, basis, "4시간에 30분, 8시간에 1시간 이상 휴게 기준이 모두 있습니다.", hits[0])]
     return [_finding("휴게시간", REVIEW, basis,
-                     "근로시간 4시간에 30분 이상, 8시간에 1시간 이상의 휴게를 근로시간 도중에 주도록 되어 있는지 확인하세요.", hits[0])]
+                     "근로시간 4시간에 30분 이상, 8시간에 1시간 이상의 휴게를 근로시간 도중에 주도록 되어 있는지 확인하세요.", hits[0],
+                     fix={"add": "회사는 근로시간이 4시간인 경우에는 30분 이상, 8시간인 경우에는 1시간 이상의 휴게시간을 근로시간 도중에 준다."})]
 
 
 def check_annual_leave(articles):
@@ -218,11 +238,13 @@ def check_annual_leave(articles):
             days = _ints(r"(\d+)일의?유급휴가", n) or _ints(r"(\d+)일", n.split("80", 1)[-1])
             if days and days[0] < 15:
                 out.append(_finding("연차유급휴가 일수", VIOLATION, basis,
-                                    f"1년간 80% 이상 출근한 근로자의 연차가 {days[0]}일로, 법정 15일보다 적습니다.", a, s))
+                                    f"1년간 80% 이상 출근한 근로자의 연차가 {days[0]}일로, 법정 15일보다 적습니다.", a, s,
+                                    _swap(days[0], "일", "15일")))
     if not any("1개월" in n for _, _, n in hits):
         a, s, _ = hits[0]
         out.append(_finding("1년 미만 근로자 연차", REVIEW, basis,
-                            "계속근로 1년 미만(또는 출근율 80% 미만)인 근로자에게 1개월 개근 시 1일의 유급휴가를 주는 규정이 있는지 확인하세요.", a, s))
+                            "계속근로 1년 미만(또는 출근율 80% 미만)인 근로자에게 1개월 개근 시 1일의 유급휴가를 주는 규정이 있는지 확인하세요.", a, s,
+                            {"add": "계속하여 근로한 기간이 1년 미만인 직원 또는 1년간 80퍼센트 미만 출근한 직원에게는 1개월 개근 시 1일의 유급휴가를 준다."}))
     return out
 
 
@@ -237,11 +259,13 @@ def check_dismissal_notice(articles):
             for d in _ints(r"(\d+)일전", n):
                 if d < 30:
                     out.append(_finding("해고예고", VIOLATION, basis,
-                                        f"해고예고 기간이 {d}일로, 법정 30일보다 짧습니다.", a, s))
+                                        f"해고예고 기간이 {d}일로, 법정 30일보다 짧습니다.", a, s,
+                                        _swap(d, "일", "30일")))
     if not out and not any("30일" in n for _, _, n in hits):
         a, s, _ = hits[0]
         out.append(_finding("해고예고", REVIEW, basis,
-                            "해고할 때 30일 전에 예고하거나 30일분 이상의 통상임금을 지급하는 규정, 해고 사유·시기의 서면 통지 규정이 있는지 확인하세요.", a, s))
+                            "해고할 때 30일 전에 예고하거나 30일분 이상의 통상임금을 지급하는 규정, 해고 사유·시기의 서면 통지 규정이 있는지 확인하세요.", a, s,
+                            {"add": "회사는 직원을 해고하려면 적어도 30일 전에 예고하여야 하고, 30일 전에 예고하지 아니하였을 때에는 30일분 이상의 통상임금을 지급한다. 해고는 해고사유와 해고시기를 서면으로 통지하여야 효력이 있다."}))
     return out
 
 
@@ -260,14 +284,17 @@ def check_pay_cut(articles):
         if "1일분" in n:
             if max(ratios) > Fraction(1, 2):
                 out.append(_finding("감급 한도(1회)", VIOLATION, basis,
-                                    "1회 감급액이 평균임금 1일분의 2분의 1을 넘습니다.", a, s))
+                                    "1회 감급액이 평균임금 1일분의 2분의 1을 넘습니다.", a, s,
+                                    {"pattern": RATIO, "repl": "2분의 1"}))
         elif max(ratios) > Fraction(1, 10):
             out.append(_finding("감급 한도(총액)", VIOLATION, basis,
-                                "감급 총액이 1임금지급기 임금총액의 10분의 1을 넘을 수 있습니다.", a, s))
+                                "감급 총액이 1임금지급기 임금총액의 10분의 1을 넘을 수 있습니다.", a, s,
+                                {"pattern": RATIO, "repl": "10분의 1"}))
     if not has_limit:
         a, s, _ = hits[0]
         out.append(_finding("감급 한도", REVIEW, basis,
-                            "감급은 1회 평균임금 1일분의 2분의 1, 총액은 1임금지급기 임금총액의 10분의 1을 넘을 수 없습니다. 이 한도를 규정에 명시하는 것이 좋습니다.", a, s))
+                            "감급은 1회 평균임금 1일분의 2분의 1, 총액은 1임금지급기 임금총액의 10분의 1을 넘을 수 없습니다. 이 한도를 규정에 명시하는 것이 좋습니다.", a, s,
+                            {"add": "감급은 1회의 금액이 평균임금의 1일분의 2분의 1을, 총액이 1임금지급기의 임금 총액의 10분의 1을 초과하지 못한다."}))
     return out
 
 
@@ -281,11 +308,13 @@ def check_maternity(articles):
         days = _ints(r"(\d+)일", n)
         if days and max(days) < 90:
             out.append(_finding("출산전후휴가 기간", VIOLATION, basis,
-                                f"출산전후휴가가 {max(days)}일로, 법정 90일보다 짧습니다.", a, s))
+                                f"출산전후휴가가 {max(days)}일로, 법정 90일보다 짧습니다.", a, s,
+                                _swap(max(days), "일", "90일")))
     if not any("120" in n for _, _, n in hits):
         a, s, _ = hits[0]
         out.append(_finding("다태아 출산전후휴가", REVIEW, basis,
-                            "한 번에 둘 이상 자녀를 임신한 경우 출산전후휴가 120일 규정이 있는지 확인하세요.", a, s))
+                            "한 번에 둘 이상 자녀를 임신한 경우 출산전후휴가 120일 규정이 있는지 확인하세요.", a, s,
+                            {"add": "한 번에 둘 이상 자녀를 임신한 경우에는 120일의 출산전후휴가를 준다."}))
     return out
 
 
@@ -297,7 +326,8 @@ def check_spouse_leave(articles):
         days = _ints(r"(\d+)일", n)
         if days and max(days) < 20:
             out.append(_finding("배우자 출산휴가 기간", VIOLATION, basis,
-                                f"배우자 출산휴가가 {max(days)}일로 되어 있습니다. 현행 법정 일수(20일)보다 짧은지 법령 원문으로 확인하세요.", a, s))
+                                f"배우자 출산휴가가 {max(days)}일로 되어 있습니다. 현행 법정 일수(20일)보다 짧은지 법령 원문으로 확인하세요.", a, s,
+                                _swap(max(days), "일", "20일")))
     return out
 
 
@@ -307,10 +337,12 @@ def check_parental_leave(articles):
     for a, s, n in _sentences_with(articles, ["육아휴직"]):
         if "기간" not in n:
             continue
-        months = [y * 12 for y in _ints(r"(\d+)년", n)] + _ints(r"(\d+)개월", n)
-        if months and max(months) < 12:
+        periods = [(y * 12, y, "년") for y in _ints(r"(\d+)년", n)] + [(m, m, "개월") for m in _ints(r"(\d+)개월", n)]
+        if periods and max(periods)[0] < 12:
+            months, value, unit = max(periods)
             out.append(_finding("육아휴직 기간", VIOLATION, basis,
-                                f"육아휴직 기간이 {max(months)}개월로, 법정 기간(1년 이상)보다 짧습니다.", a, s))
+                                f"육아휴직 기간이 {months}개월로, 법정 기간(1년 이상)보다 짧습니다.", a, s,
+                                _swap(value, unit, "1년")))
     return out
 
 
@@ -321,7 +353,8 @@ def check_retirement_age(articles):
         for age in _ints(r"(\d+)세", n):
             if 40 <= age < 60:
                 out.append(_finding("정년", VIOLATION, basis,
-                                    f"정년이 {age}세로, 법정 정년(60세 이상)보다 낮습니다.", a, s))
+                                    f"정년이 {age}세로, 법정 정년(60세 이상)보다 낮습니다.", a, s,
+                                    _swap(age, "세", "60세")))
     return out
 
 
@@ -335,11 +368,13 @@ def check_severance(articles):
         for y in _ints(r"(\d+)년이상", n):
             if y > 1:
                 out.append(_finding("퇴직급여 지급 요건", VIOLATION, basis,
-                                    f"계속근로 {y}년 이상을 요건으로 하고 있습니다. 법정 요건은 1년 이상입니다.", a, s))
+                                    f"계속근로 {y}년 이상을 요건으로 하고 있습니다. 법정 요건은 1년 이상입니다.", a, s,
+                                    _swap(y, "년", "1년")))
     if not any("30일분" in n for _, _, n in hits):
         a, s, _ = hits[0]
         out.append(_finding("퇴직금 산정", REVIEW, basis,
-                            "계속근로기간 1년에 대해 30일분 이상의 평균임금을 퇴직금으로 지급하는지(또는 퇴직연금 제도) 확인하세요.", a, s))
+                            "계속근로기간 1년에 대해 30일분 이상의 평균임금을 퇴직금으로 지급하는지(또는 퇴직연금 제도) 확인하세요.", a, s,
+                            {"add": "퇴직금은 계속근로기간 1년에 대하여 30일분 이상의 평균임금으로 한다."}))
     return out
 
 
@@ -348,7 +383,10 @@ def check_sexual_harassment(articles):
     if find_articles(articles, ["성희롱"]):
         return []
     return [_finding("직장 내 성희롱 예방", REVIEW, basis,
-                     "직장 내 성희롱 예방교육과 발생 시 조치에 관한 규정이 보이지 않습니다. 법정 의무이므로 규정에 두는 것이 좋습니다.")]
+                     "직장 내 성희롱 예방교육과 발생 시 조치에 관한 규정이 보이지 않습니다. 법정 의무이므로 규정에 두는 것이 좋습니다.",
+                     fix={"new": "제○조(직장 내 성희롱의 금지 및 예방) ① 누구든지 직장 내 성희롱을 하여서는 아니 된다.\n"
+                                 "② 회사는 직장 내 성희롱 예방을 위한 교육을 연 1회 이상 실시한다.\n"
+                                 "③ 회사는 직장 내 성희롱 발생 사실을 알게 된 경우 지체 없이 사실 확인을 위한 조사를 하고, 피해근로자를 보호하기 위하여 필요한 조치를 한다."})]
 
 
 CHECKS = [

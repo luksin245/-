@@ -10,6 +10,7 @@ import streamlit as st
 
 from checks import MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required, check_violations
 from law_db import LawDB
+from revision import DELETE, NEW, compare_rows, diff_html, diff_segments, draft_rows, to_docx
 from rule_parser import extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
@@ -39,7 +40,7 @@ def show_law(db, law, label):
         st.caption(f"{law} {label}: 법령 데이터가 없습니다. download_laws.py를 다시 실행하세요.")
 
 
-def to_excel(articles, required, findings):
+def to_excel(articles, required, findings, revision_rows=()):
     req_rows = [{
         "번호": r["번호"], "항목": r["항목"], "상태": r["상태"],
         "세부": "\n".join(
@@ -57,7 +58,82 @@ def to_excel(articles, required, findings):
         pd.DataFrame(req_rows).to_excel(xw, sheet_name="필수기재사항", index=False)
         pd.DataFrame(find_rows).to_excel(xw, sheet_name="위반점검", index=False)
         pd.DataFrame(art_rows).to_excel(xw, sheet_name="조항목록", index=False)
+        if revision_rows:
+            pd.DataFrame(revision_rows).to_excel(xw, sheet_name="신구대조표", index=False)
     return buf.getvalue()
+
+
+def edit_rows(rows, prefix):
+    """신구대조표 행을 화면에서 고칠 수 있게 보여 주고, 포함하기로 한 행을 돌려준다."""
+    final = []
+    for i, r in enumerate(rows):
+        key = f"{prefix}-{i}"
+        head = f"[{r['구분']}] " + (r["조항"] or r["개정안"].split("\n", 1)[0][:30])
+        with st.expander(head):
+            include = st.checkbox("신구대조표에 포함", value=True, key=f"{key}-on")
+            left, right = st.columns(2)
+            with left:
+                st.markdown("**현행**")
+                st.text(r["현행"] or "<신 설>")
+            with right:
+                st.markdown("**개정(안)** — 직접 고칠 수 있습니다")
+                lines = r["개정안"].count("\n") + len(r["개정안"]) // 45 + 2
+                revised = st.text_area("개정안", r["개정안"], key=f"{key}-new",
+                                       height=min(400, max(100, lines * 24)), label_visibility="collapsed",
+                                       disabled=r["구분"] == DELETE)
+            reason = st.text_input("비고(개정 사유)", r["사유"], key=f"{key}-why")
+            if r["구분"] not in (NEW, DELETE) and revised != r["현행"]:
+                _, after = diff_segments(r["현행"], revised)
+                st.markdown("**바뀐 부분 미리보기**")
+                st.markdown(diff_html(after), unsafe_allow_html=True)
+        if include and (r["구분"] in (NEW, DELETE) or revised.strip() != r["현행"].strip()):
+            final.append({**r, "개정안": revised, "사유": reason})
+    return final
+
+
+def revision_tab(articles, required, findings, file_name):
+    mode = st.radio("만드는 방법", ["점검 결과로 개정안 초안 만들기", "개정본 PDF와 비교하기"], horizontal=True)
+
+    if mode.startswith("점검"):
+        st.caption("위반 의심·확인 필요 항목과 빠진 필수 기재사항으로 개정안 초안을 만들었습니다. "
+                   "사업장 실정에 맞게 고친 뒤 내려받으세요. 신설 조항의 '제○조'와 '○○' 부분은 직접 채워 주세요.")
+        rows = draft_rows(articles, required, findings)
+        body = [a for a in articles if not a["부칙"]]
+        extra = st.multiselect("직접 개정할 조항 추가", [a["조항"] for a in body],
+                               format_func=lambda x: next(f"{x}({a['제목']})" for a in body if a["조항"] == x))
+        drafted = {r["조항"] for r in rows}
+        for label in extra:
+            if label not in drafted:
+                a = next(a for a in body if a["조항"] == label)
+                rows.append({"구분": "개정", "조항": label, "현행": a["내용"], "개정안": a["내용"], "사유": ""})
+        prefix = f"draft-{file_name}"
+    else:
+        st.caption("개정한 취업규칙 PDF를 올리면 현행과 조항별로 비교합니다. 조항은 제목으로 먼저 맞추므로 번호만 바뀐 조항은 제외됩니다. "
+                   "제목까지 바뀐 조항은 삭제·신설로 나올 수 있습니다.")
+        revised_pdf = st.file_uploader("개정본 PDF", type="pdf", key="revised-pdf")
+        if not revised_pdf:
+            return []
+        try:
+            _, new_articles, _, _ = analyze(revised_pdf.getvalue())
+        except Exception as e:
+            st.error(f"개정본 PDF를 읽지 못했습니다: {e}")
+            return []
+        rows = compare_rows(articles, new_articles)
+        prefix = f"compare-{file_name}-{revised_pdf.name}"
+
+    if not rows:
+        st.info("바뀐 조항이 없습니다.")
+        return []
+
+    final = edit_rows(rows, prefix)
+    st.divider()
+    title = st.text_input("문서 제목", "취업규칙 신구대조표")
+    st.write(f"신구대조표에 들어갈 조항: {len(final)}개")
+    if final:
+        st.download_button("📥 신구대조표 Word(.docx) 다운로드", data=to_docx(final, title),
+                           file_name=f"{file_name.rsplit('.', 1)[0]}_신구대조표.docx",
+                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    return final
 
 
 db = load_laws()
@@ -101,9 +177,9 @@ c2.metric("필수 기재사항 누락", sum(r["상태"] in (MISSING, PARTIAL) fo
 c3.metric("위반 의심", sum(f["상태"] == VIOLATION for f in findings))
 c4.metric("확인 필요", sum(f["상태"] == REVIEW for f in findings))
 
-tab1, tab2, tab3, tab4 = st.tabs(["① 필수 기재사항", "② 위반 점검", "③ 조항 목록", "④ 보고서 다운로드"])
+tab_req, tab_check, tab_rev, tab_list, tab_report = st.tabs(["① 필수 기재사항", "② 위반 점검", "③ 신구대조표", "④ 조항 목록", "⑤ 보고서 다운로드"])
 
-with tab1:
+with tab_req:
     st.write("근로기준법 제93조에 따라 취업규칙에 반드시 적어야 하는 사항입니다.")
     with st.expander("근로기준법 제93조 원문 보기"):
         show_law(db, "근로기준법", "제93조")
@@ -115,7 +191,7 @@ with tab1:
                 st.markdown(f"- **{d['세부']}**{note}: {where}")
     st.caption("13호 '그 밖에 근로자 전체에 적용될 사항'은 사업장마다 달라 자동 점검하지 않습니다.")
 
-with tab2:
+with tab_check:
     if not findings:
         st.info("점검할 항목을 찾지 못했습니다.")
     for f in findings:
@@ -129,7 +205,7 @@ with tab2:
             for law, label in f["근거"]:
                 show_law(db, law, label)
 
-with tab3:
+with tab_list:
     st.write(f"PDF에서 {len(articles)}개 조항을 찾았습니다. 조항이 빠지거나 잘못 나뉘었다면 알려 주세요.")
     for a in articles:
         head = f"{a['조항']}" + (f"({a['제목']})" if a["제목"] else "")
@@ -138,11 +214,14 @@ with tab3:
     with st.expander("PDF에서 추출한 전체 텍스트"):
         st.text(text)
 
-with tab4:
-    st.write("점검 결과를 엑셀 파일로 내려받습니다. (필수기재사항, 위반점검, 조항목록 시트)")
+with tab_rev:
+    final_rows = revision_tab(articles, required, findings, uploaded.name)
+
+with tab_report:
+    st.write("점검 결과를 엑셀 파일로 내려받습니다. (필수기재사항, 위반점검, 조항목록, 신구대조표 시트)")
     st.download_button(
         "📥 엑셀 보고서 다운로드",
-        data=to_excel(articles, required, findings),
+        data=to_excel(articles, required, findings, final_rows),
         file_name=f"{uploaded.name.rsplit('.', 1)[0]}_검토결과.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
