@@ -173,16 +173,35 @@ def diff_html(segments):
 
 
 # ---------------------------------------------------------------------------
-# Word 내보내기
+# Word 내보내기 (A4 가로, 제목 상자 + 현행/개정 안/비고 3칸 표)
 # ---------------------------------------------------------------------------
-FONT = "맑은 고딕"
+FONTS = ("함초롬바탕", "바탕", "맑은 고딕")
+HEADING = re.compile(r"^(제\s*[\d○]+\s*조(?:\s*의\s*\d+)?)\s*(\([^)]*\))?\s*(.*)$", re.S)
+ITEM_INDENT = [  # (문단 시작 패턴, 왼쪽 들여쓰기 cm) — 둘째 줄부터 글머리 뒤에 맞춘다
+    (re.compile(rf"^[{''.join(CIRCLED)}]"), 0.45),
+    (re.compile(r"^\d+\.\s"), 0.9),
+    (re.compile(r"^[가나다라마바사아자차카타파하]\.\s"), 1.35),
+]
 
 
-def _set_font(run, size=10, bold=False):
-    run.font.name = FONT
+def _layout(text):
+    """첫 줄의 '제17조(변경사항 신고) 본문'을 '제17조 (변경사항 신고)' 줄과 본문 줄로 나눈다."""
+    lines = [line.strip() for line in text.strip().split("\n")]
+    m = HEADING.match(lines[0]) if lines and lines[0] else None
+    if not m:
+        return "\n".join(lines), False
+    head = re.sub(r"\s+", "", m.group(1)) + (f" {m.group(2)}" if m.group(2) else "")
+    rest = [m.group(3).strip()] if m.group(3).strip() else []
+    return "\n".join([head] + rest + lines[1:]), True
+
+
+def _font(run, name, size, bold=False):
+    run.font.name = name
     run.font.size = Pt(size)
     run.font.bold = bold
-    run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), FONT)
+    rfonts = run._element.get_or_add_rPr().get_or_add_rFonts()
+    for attr in ("w:eastAsia", "w:ascii", "w:hAnsi"):
+        rfonts.set(qn(attr), name)
 
 
 def _shade(cell, color):
@@ -192,60 +211,120 @@ def _shade(cell, color):
     cell._tc.get_or_add_tcPr().append(shd)
 
 
-def _write_segments(cell, segments, placeholder=None):
-    p = cell.paragraphs[0]
-    if placeholder:
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _set_font(p.add_run(placeholder))
-        return
+def _tight(paragraph):
+    fmt = paragraph.paragraph_format
+    fmt.space_before = Pt(0)
+    fmt.space_after = Pt(0)
+    fmt.line_spacing = 1.15
+
+
+def _indent(paragraph, text):
+    for pattern, cm in ITEM_INDENT:
+        if pattern.match(text):
+            paragraph.paragraph_format.left_indent = Cm(cm)
+            paragraph.paragraph_format.first_line_indent = Cm(-0.45)
+            return
+
+
+def _write_cell(cell, segments, has_heading, font, size, highlight):
+    """조각들을 문단으로 나눠 쓴다. 첫 문단이 조 제목이면 굵게, 항·호·목은 내어쓰기."""
+    paras = "".join(t for t, _ in segments).split("\n")
+    p_index, paragraph = 0, cell.paragraphs[0]
+    _tight(paragraph)
+    _indent(paragraph, paras[0])
     for text, changed in segments:
-        for i, piece in enumerate(text.split("\n")):
-            if i:
-                p = cell.add_paragraph()
-            if piece:
-                run = p.add_run(piece)
-                _set_font(run, bold=changed and bool(piece.strip()))
-                if changed and piece.strip():
-                    run.font.underline = True
-                    run.font.color.rgb = RGBColor(0xC0, 0x39, 0x2B)
+        for k, piece in enumerate(text.split("\n")):
+            if k:
+                p_index += 1
+                paragraph = cell.add_paragraph()
+                _tight(paragraph)
+                _indent(paragraph, paras[p_index])
+            if not piece:
+                continue
+            run = paragraph.add_run(piece)
+            mark = highlight and changed and bool(piece.strip())
+            _font(run, font, size, bold=(has_heading and p_index == 0) or mark)
+            if mark:
+                run.font.underline = True
+                run.font.color.rgb = RGBColor(0xC0, 0x39, 0x2B)
+    paragraph.paragraph_format.space_after = Pt(10)  # 조항 사이 여백
 
 
-def to_docx(rows, title="취업규칙 신구대조표"):
+def _placeholder(cell, text, font, size):
+    p = cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _font(p.add_run(text), font, size)
+
+
+def _title_box(doc, title, font, page_width_cm):
+    """그림자가 있는 테두리 상자 안의 제목."""
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    side = Cm(max(1.0, (page_width_cm - 10.5) / 2))
+    p.paragraph_format.left_indent = side
+    p.paragraph_format.right_indent = side
+    p.paragraph_format.space_after = Pt(14)
+    borders = OxmlElement("w:pBdr")
+    for edge in ("top", "left", "bottom", "right"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), "8")
+        el.set(qn("w:space"), "8")
+        el.set(qn("w:color"), "000000")
+        el.set(qn("w:shadow"), "1")
+        borders.append(el)
+    p._p.get_or_add_pPr().append(borders)
+    _font(p.add_run(title), font, 17, bold=True)
+
+
+def to_docx(rows, title="취업규칙 신구대조표", font=FONTS[0], highlight=False, with_reason=True, size=9.5):
     doc = Document()
     section = doc.sections[0]
     section.orientation = WD_ORIENT.LANDSCAPE
     section.page_width, section.page_height = Cm(29.7), Cm(21.0)
+    margin = 1.2
     for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
-        setattr(section, side, Cm(1.8))
+        setattr(section, side, Cm(margin))
+    usable = 29.7 - 2 * margin
 
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _set_font(p.add_run(title), size=16, bold=True)
+    _title_box(doc, title, font, usable)
 
     table = doc.add_table(rows=1, cols=3)
     table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
-    widths = (Cm(11.3), Cm(11.3), Cm(3.5))
+    widths = (Cm(usable * 0.405), Cm(usable * 0.455), Cm(usable * 0.14))
     for column, width in zip(table.columns, widths):
         column.width = width
-    for cell, name, width in zip(table.rows[0].cells, ("현 행", "개 정 (안)", "비 고"), widths):
+    for cell, name, width in zip(table.rows[0].cells, ("현행", "개정 안", "비고"), widths):
         cell.width = width
-        _shade(cell, "D9E2F3")
+        _shade(cell, "D9D9D9")
         cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _set_font(cell.paragraphs[0].add_run(name), bold=True)
+        _tight(cell.paragraphs[0])
+        _font(cell.paragraphs[0].add_run(name), font, size)
 
     for r in rows:
         cells = table.add_row().cells
         for cell, width in zip(cells, widths):
             cell.width = width
-        left, right = diff_segments(r["현행"], r["개정안"])
-        _write_segments(cells[0], left, "<신 설>" if r["구분"] == NEW else None)
-        _write_segments(cells[1], right, "<삭 제>" if r["구분"] == DELETE else None)
-        _set_font(cells[2].paragraphs[0].add_run(r["사유"]), size=9)
+        current, cur_head = _layout(r["현행"])
+        revised, new_head = _layout(r["개정안"])
+        left, right = diff_segments(current, revised)
+        if r["구분"] == NEW:
+            _placeholder(cells[0], "<신 설>", font, size)
+        else:
+            _write_cell(cells[0], left, cur_head, font, size, highlight)
+        if r["구분"] == DELETE:
+            _placeholder(cells[1], "<삭 제>", font, size)
+        else:
+            _write_cell(cells[1], right, new_head, font, size, highlight)
+        if with_reason and r["사유"]:
+            _tight(cells[2].paragraphs[0])
+            _font(cells[2].paragraphs[0].add_run(r["사유"]), font, size - 1)
 
-    note = doc.add_paragraph()
-    _set_font(note.add_run("※ 밑줄 친 부분이 바뀐 내용입니다."), size=9)
+    if highlight:
+        note = doc.add_paragraph()
+        _font(note.add_run("※ 밑줄 친 부분이 바뀐 내용입니다."), font, size - 1)
 
     buf = io.BytesIO()
     doc.save(buf)

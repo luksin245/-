@@ -14,7 +14,7 @@ from checks import MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_requi
 from law_changes import (detect_base_date, draft_new_article, fmt, is_relevant, law_changes,
                          load_history, related_articles, short_name)
 from law_db import LawDB
-from revision import DELETE, NEW, compare_rows, diff_html, diff_segments, draft_rows, to_docx
+from revision import DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, to_docx
 from rule_parser import extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
@@ -238,9 +238,14 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
     final = edit_rows(rows, prefix)
     st.divider()
     title = st.text_input("문서 제목", "취업규칙 신구대조표")
+    c1, c2, c3 = st.columns(3)
+    font = c1.selectbox("글꼴", FONTS, help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
+    with_reason = c2.checkbox("비고에 개정 사유 넣기", value=True)
+    highlight = c3.checkbox("바뀐 부분 밑줄 표시", value=False)
     st.write(f"신구대조표에 들어갈 조항: {len(final)}개")
     if final:
-        st.download_button("📥 신구대조표 Word(.docx) 다운로드", data=to_docx(final, title),
+        st.download_button("📥 신구대조표 Word(.docx) 다운로드",
+                           data=to_docx(final, title, font=font, highlight=highlight, with_reason=with_reason),
                            file_name=f"{file_name.rsplit('.', 1)[0]}_신구대조표.docx",
                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     return final
