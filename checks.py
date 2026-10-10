@@ -189,7 +189,8 @@ def _swap(value, unit, new):
 def _sentences_with(articles, keywords, exclude=()):
     """키워드를 포함한 (조항, 원문 문장, 공백 제거 문장) 목록."""
     out = []
-    for a in articles:
+    titled = sorted(articles, key=lambda a: not any(k in norm(a["제목"]) for k in keywords))
+    for a in titled:
         for s in sentences(a["내용"]):
             n = norm(s)
             if any(k in n for k in keywords) and not any(x in n for x in exclude):
@@ -243,7 +244,9 @@ def check_overtime(articles):
         return []
     out = []
     for a, s, n in hits:
-        for h in _ints(r"1주(?:간|일)?[^\d]{0,25}?(\d+)시간", n):
+        if "초과하여" in n or "초과한" in n:  # "1주 40시간을 초과하여 연장근로하는 경우" 같은 기준 문장
+            continue
+        for h in _ints(r"1주(?:간|일)?[^\d]{0,25}?(\d+)시간(?![을를]?초과)", n):
             if h > 12:
                 out.append(_finding("연장근로 한도", VIOLATION, basis,
                                     f"1주 연장근로 {h}시간이 한도(12시간)를 넘습니다.", a, s,
@@ -271,12 +274,12 @@ def check_break(articles):
 
 def check_annual_leave(articles):
     basis = [(LABOR, "제60조")]
-    hits = _sentences_with(articles, ["연차"])
+    hits = _article_sentences(articles, ["연차유급휴가", "연차휴가"])
     if not hits:
         return []
     out = []
     for a, s, n in hits:
-        if "80" in n or "8할" in n:
+        if re.search(r"(80(퍼센트|%|프로)|8할)이상", n) and "미만" not in n:
             days = _ints(r"(\d+)일의?유급휴가", n) or _ints(r"(\d+)일", n.split("80", 1)[-1])
             if days and days[0] < 15:
                 out.append(_finding("연차유급휴가 일수", VIOLATION, basis,
@@ -348,7 +351,7 @@ def check_pay_cut(articles):
 
 def check_maternity(articles):
     basis = [(LABOR, "제74조")]
-    hits = _sentences_with(articles, ["출산전후휴가", "출산휴가", "산전후휴가"], exclude=("배우자",))
+    hits = _sentences_with(articles, ["출산전후휴가", "출산휴가", "산전후휴가"], exclude=("배우자", "급여", "최초", "차액"))
     if not hits:
         return []
     out = []
@@ -475,8 +478,10 @@ def check_overtime_premium(articles):
             out.append(_finding("연장·야간·휴일근로 가산임금", VIOLATION, basis,
                                 "연장·야간·휴일근로에는 통상임금의 100분의 50 이상을 가산해야 합니다.", a, s,
                                 {"pattern": RATIO, "repl": "100분의 50"}))
-    holiday = [(a, s, n) for a, s, n in hits if "휴일" in n]
-    if holiday and not any("100분의100" in n or "100%" in n or "100퍼센트" in n for _, _, n in holiday):
+    holiday = _article_sentences(articles, ["휴일근로"])
+    full = [norm(a["내용"]) for a in articles]
+    has_100 = any("휴일" in t and any(k in t for k in ("100분의100", "100%", "100퍼센트")) for t in full)
+    if holiday and not has_100:
         a, s, _ = holiday[0]
         out.append(_finding("8시간 초과 휴일근로 가산", REVIEW, basis,
                             "휴일근로 중 8시간을 넘는 부분은 통상임금의 100분의 100 이상을 가산해야 합니다. 이 규정이 있는지 확인하세요.", a, s,
@@ -506,7 +511,7 @@ def check_infertility(articles):
     basis = [(EQUAL, "제18조의3")]
     out = []
     for a, s, n in _sentences_with(articles, ["난임"]):
-        days = _ints(r"(\d+)일", n)
+        days = _ints(r"(\d+)일(?!전)", n)
         if "최초" not in n and days and max(days) < 6:
             out.append(_finding("난임치료휴가 기간", VIOLATION, basis,
                                 f"난임치료휴가는 연간 6일(최초 2일 유급)입니다. 규칙에는 {max(days)}일로 되어 있습니다. (2025. 2. 23. 시행)", a, s,
@@ -538,7 +543,7 @@ def check_family_care(articles):
     basis = [(EQUAL, "제22조의2")]
     out = []
     for a, s, n in _sentences_with(articles, ["가족돌봄휴가"]):
-        days = _ints(r"(\d+)일", n)
+        days = _ints(r"(\d+)일(?!전)", n)
         if days and max(days) < 10:
             out.append(_finding("가족돌봄휴가 기간", VIOLATION, basis,
                                 f"가족돌봄휴가는 연간 최장 10일입니다. 규칙에는 {max(days)}일로 되어 있습니다.", a, s,

@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 
 from checks import norm
+from rule_parser import ADDENDA, TOC_LINE
 
 # 조문 끝의 개정 표시: <개정 2019. 1. 15.>, [본조신설 2019. 1. 15.] 등
 ANNOTATION = re.compile(
@@ -50,13 +51,19 @@ def fmt(ymd):
 
 
 def detect_base_date(text):
-    """취업규칙 부칙에 적힌 날짜 중 가장 늦은 날짜(YYYYMMDD). 못 찾으면 None."""
-    m = re.search(r"부\s*칙", text)
-    if not m:
+    """취업규칙 부칙에 적힌 날짜 중 가장 늦은 날짜(YYYYMMDD). 못 찾으면 None.
+    목차에 있는 '부칙'은 건너뛰고, 본문 뒤의 첫 '부칙'부터 찾는다."""
+    lines = text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    toc_end = max((offsets[i + 1] for i, line in enumerate(lines) if TOC_LINE.search(line)), default=0)
+    starts = [offsets[i] for i, line in enumerate(lines) if ADDENDA.match(line) and offsets[i] >= toc_end]
+    if not starts:
         return None
     limit = date.today().replace(year=date.today().year + 1).strftime("%Y%m%d")
     found = []
-    for y, mo, d in DATE.findall(text[m.start():]):
+    for y, mo, d in DATE.findall(text[starts[0]:]):
         if 1 <= int(mo) <= 12 and 1 <= int(d) <= 31:
             ymd = f"{y}{int(mo):02d}{int(d):02d}"
             if "1990" <= ymd[:4] and ymd <= limit:

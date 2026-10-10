@@ -14,6 +14,8 @@ HEADING = re.compile(
 )
 CHAPTER = re.compile(r"^\s*제\s*\d+\s*장\s*.*")
 ADDENDA = re.compile(r"^\s*<?\s*부\s*칙\s*>?\s*(?:[<(（].*)?$")
+# 목차 줄: "제1조(목적) ·········· 7", "제1조(목적) ...... 7"
+TOC_LINE = re.compile(r"(?:[·.…‥・ㆍ]\s*){4,}\s*\d+\s*$")
 # 쪽번호만 있는 줄: "3", "- 3 -", "3 / 20"
 PAGE_NO = re.compile(r"^\s*[-–]?\s*\d+\s*[-–]?\s*$|^\s*\d+\s*/\s*\d+\s*$")
 # 제목 없는 조항 뒤에 이런 글자가 오면 본문 속 인용("제10조에 따라")으로 본다
@@ -58,9 +60,10 @@ def split_articles(text):
             articles.append(current)
 
     for line in text.splitlines():
-        if PAGE_NO.match(line):
+        if PAGE_NO.match(line) or TOC_LINE.search(line):
             continue
-        if ADDENDA.match(line):
+        # 본문 조항이 나오기 전의 '부칙'은 목차에 있는 것이다
+        if ADDENDA.match(line) and (articles or current):
             close()
             current, in_addenda, last_no = None, True, 0
             continue
