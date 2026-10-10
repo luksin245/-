@@ -113,7 +113,8 @@ def main():
                         help="Open API 인증키(OC). 환경변수 LAW_OC로도 지정 가능")
     parser.add_argument("--law", action="append",
                         help="내려받을 법령명 (여러 번 지정 가능, 생략하면 기본 목록)")
-    parser.add_argument("--out", default="laws", help="저장 폴더 (기본: laws)")
+    parser.add_argument("--out", default=str(Path(__file__).resolve().parent / "laws"),
+                        help="저장 폴더 (기본: 이 파일 옆의 laws 폴더)")
     args = parser.parse_args()
 
     if not args.oc:

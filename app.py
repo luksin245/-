@@ -4,6 +4,7 @@
 """
 
 import io
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -15,12 +16,15 @@ from rule_parser import extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
 
+# 실행 위치와 상관없이 app.py 옆의 laws 폴더를 쓴다
+LAWS_DIR = Path(__file__).resolve().parent / "laws"
+
 st.set_page_config(page_title="취업규칙 검토", page_icon="📋", layout="wide")
 
 
 @st.cache_resource
 def load_laws():
-    return LawDB("laws")
+    return LawDB(LAWS_DIR)
 
 
 @st.cache_data
@@ -145,7 +149,8 @@ with st.sidebar:
         for name, date, count in laws:
             st.caption(f"{name} · 시행 {date} · {count}개 조문")
     else:
-        st.warning("laws 폴더에 법령 데이터가 없습니다. 먼저 download_laws.py를 실행하세요.")
+        st.warning("법령 데이터가 없습니다. 이 프로그램과 같은 폴더에서 download_laws.py를 실행하세요.")
+        st.caption(f"찾은 위치: {LAWS_DIR}")
     st.divider()
     st.caption("출처: 국가법령정보센터(www.law.go.kr)")
 
