@@ -298,7 +298,7 @@ tab_req, tab_check, tab_law, tab_rev, tab_list, tab_report = st.tabs(
     ["① 필수 기재사항", "② 위반 점검", "③ 법 개정 반영", "④ 신구대조표", "⑤ 조항 목록", "⑥ 보고서 다운로드"])
 
 with tab_req:
-    st.write("근로기준법 제93조에 따라 취업규칙에 반드시 적어야 하는 사항입니다.")
+    st.write("근로기준법 제93조와 고용노동부 표준취업규칙(2026. 2.)의 [필수] 조항을 기준으로, 취업규칙에 반드시 적어야 하는 사항입니다.")
     with st.expander("근로기준법 제93조 원문 보기"):
         show_law(db, "근로기준법", "제93조")
     for r in required:
