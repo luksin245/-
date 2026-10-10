@@ -10,7 +10,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from checks import MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required, check_violations
+from checks import (MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required, check_violations,
+                    skipped_items)
 from law_changes import (detect_base_date, draft_new_article, fmt, is_relevant, law_changes,
                          load_history, related_articles, short_name)
 from law_db import LawDB
@@ -59,7 +60,7 @@ def to_excel(articles, required, findings, revision_rows=()):
     req_rows = [{
         "번호": r["번호"], "항목": r["항목"], "상태": r["상태"],
         "세부": "\n".join(
-            f"{d['세부']}{' (해당 시)' if d['해당 시만'] else ''}: {', '.join(d['조항']) or '없음'}"
+            f"{d['세부']}: {', '.join(d['조항']) or '없음'}"
             for d in r["세부"]),
     } for r in required]
     find_rows = [{
@@ -304,9 +305,9 @@ with tab_req:
         with st.expander(f"{ICON[r['상태']]} {r['번호']}. {r['항목']} — {r['상태']}"):
             for d in r["세부"]:
                 where = ", ".join(d["조항"]) if d["조항"] else "찾지 못함"
-                note = " (해당하는 경우에만 필요)" if d["해당 시만"] else ""
-                st.markdown(f"- **{d['세부']}**{note}: {where}")
-    st.caption("13호 '그 밖에 근로자 전체에 적용될 사항'은 사업장마다 달라 자동 점검하지 않습니다.")
+                st.markdown(f"- **{d['세부']}**: {where}")
+    st.caption(f"해당하는 경우에만 적으면 되는 항목({', '.join(skipped_items())})과 "
+               "13호 '그 밖에 근로자 전체에 적용될 사항'은 사업장마다 달라 점검하지 않습니다.")
 
 with tab_check:
     if not findings:

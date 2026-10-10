@@ -96,7 +96,7 @@ def draft_rows(articles, required, findings):
 
     for item in required:
         for d in item["세부"]:
-            if not d["조항"] and not d["해당 시만"] and d["세부"] in TEMPLATES:
+            if not d["조항"] and d["세부"] in TEMPLATES:
                 new_rows.append(_row(NEW, "", "", TEMPLATES[d["세부"]],
                                      f"필수 기재사항 누락: {d['세부']}(근로기준법 제93조 제{item['번호']}호)"))
     return rows + new_rows

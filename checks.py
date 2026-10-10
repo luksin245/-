@@ -99,27 +99,22 @@ REQUIRED_ITEMS = [
 ]
 
 
+def skipped_items():
+    """'해당하는 경우에만' 적으면 되는 항목. 사업장마다 달라 점검하지 않는다."""
+    return [f"{name}({no}호)" if all(o for *_, o, _ in subs) else name
+            for no, _, subs in REQUIRED_ITEMS
+            for name, _, optional, _ in subs if optional]
+
+
 def check_required(articles):
     results = []
     for no, title, subs in REQUIRED_ITEMS:
-        details = []
-        for name, keywords, optional, scope in subs:
-            hits = find_articles(articles, keywords, scope)
-            details.append({
-                "세부": name,
-                "해당 시만": optional,
-                "조항": [a["조항"] for a in hits],
-            })
-        required = [d for d in details if not d["해당 시만"]]
-        found = [d for d in required if d["조항"]]
-        if not required:  # 모두 '해당 시에만' 필요한 항목
-            status = PRESENT if any(d["조항"] for d in details) else REVIEW
-        elif len(found) == len(required):
-            status = PRESENT
-        elif found:
-            status = PARTIAL
-        else:
-            status = MISSING
+        details = [{"세부": name, "조항": [a["조항"] for a in find_articles(articles, keywords, scope)]}
+                   for name, keywords, optional, scope in subs if not optional]
+        if not details:  # 모두 '해당하는 경우에만' 필요한 항목
+            continue
+        found = [d for d in details if d["조항"]]
+        status = PRESENT if len(found) == len(details) else PARTIAL if found else MISSING
         results.append({"번호": no, "항목": title, "상태": status, "세부": details})
     return results
 
