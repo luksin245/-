@@ -4,12 +4,15 @@
 """
 
 import io
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from checks import MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required, check_violations
+from law_changes import (detect_base_date, draft_new_article, fmt, is_relevant, law_changes,
+                         load_history, related_articles, short_name)
 from law_db import LawDB
 from revision import DELETE, NEW, compare_rows, diff_html, diff_segments, draft_rows, to_docx
 from rule_parser import extract_text, split_articles
@@ -33,6 +36,14 @@ def analyze(pdf_bytes):
     articles = split_articles(text)
     body = [a for a in articles if not a["부칙"]]
     return text, articles, check_required(body), check_violations(articles)
+
+
+@st.cache_data
+def cached_law_changes(base, laws_dir):
+    history = load_history(laws_dir)
+    changes, short = law_changes(history, base)
+    first = min((h["버전"][0]["시행일자"] for h in history.values()), default=None)
+    return bool(history), changes, short, first
 
 
 def show_law(db, law, label):
@@ -85,7 +96,8 @@ def edit_rows(rows, prefix):
                 revised = st.text_area("개정안", r["개정안"], key=f"{key}-new",
                                        height=min(400, max(100, lines * 24)), label_visibility="collapsed",
                                        disabled=r["구분"] == DELETE)
-            reason = st.text_input("비고(개정 사유)", r["사유"], key=f"{key}-why")
+            reason = st.text_area("비고(개정 사유)", r["사유"], key=f"{key}-why",
+                                  height=max(68, 28 * (r["사유"].count("\n") + 1)))
             if r["구분"] not in (NEW, DELETE) and revised != r["현행"]:
                 _, after = diff_segments(r["현행"], revised)
                 st.markdown("**바뀐 부분 미리보기**")
@@ -95,13 +107,107 @@ def edit_rows(rows, prefix):
     return final
 
 
-def revision_tab(articles, required, findings, file_name):
+def law_change_tab(articles, text):
+    """기준일 이후 법 개정 사항. 신구대조표에 추가하기로 고른 행을 돌려준다."""
+    body = [a for a in articles if not a["부칙"]]
+    detected = detect_base_date(text)
+    default = datetime.strptime(detected, "%Y%m%d").date() if detected else date(2020, 1, 1)
+    base_date = st.date_input("취업규칙 기준일 (마지막으로 개정해 시행한 날)", value=default,
+                              min_value=date(1990, 1, 1), max_value=date(2100, 12, 31))
+    if detected:
+        st.caption(f"부칙에서 찾은 가장 늦은 날짜({fmt(detected)})를 기준일로 넣었습니다. 다르면 고쳐 주세요.")
+    else:
+        st.warning("부칙에서 시행일을 찾지 못했습니다. 취업규칙을 마지막으로 개정한 날짜를 직접 입력해 주세요.")
+    base = base_date.strftime("%Y%m%d")
+
+    has_history, changes, short, first = cached_law_changes(base, str(LAWS_DIR))
+    if not has_history:
+        st.warning("법령 개정 이력 데이터가 없습니다. 새 버전의 download_laws.py를 실행해 개정 이력을 받아 주세요.")
+        st.code("python download_laws.py --oc 인증키", language=None)
+        return []
+    if short:
+        st.warning(f"다음 법령은 기준일까지 거슬러 올라가는 이력이 없어 {fmt(first)} 이후 개정만 보여 줍니다: "
+                   f"{', '.join(short_name(x) for x in short)}. 더 이전부터 보려면 "
+                   f"`python download_laws.py --oc 인증키 --since {base}` 로 다시 받으세요.")
+
+    for c in changes:
+        c["관련"] = related_articles(c, body)
+    related = [c for c in changes if c["관련"]]
+    unmatched = [c for c in changes if not c["관련"] and is_relevant(c)]
+    others = [c for c in changes if not c["관련"] and not is_relevant(c)]
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("기준일 이후 바뀐 조문", len(changes))
+    m2.metric("취업규칙 관련 조항 있음", len(related))
+    m3.metric("시행 예정", sum(c["시행예정"] for c in changes))
+    if not changes:
+        st.success(f"{fmt(base)} 이후 바뀐 조문이 없습니다.")
+        return []
+
+    picked = {}  # 취업규칙 조항 → 행
+
+    def law_diff(c):
+        left, right = st.columns(2)
+        old_seg, new_seg = diff_segments(c["이전"], c["현재"])
+        with left:
+            st.markdown("**개정 전**")
+            st.markdown(diff_html(old_seg) if c["이전"] else "(없음)", unsafe_allow_html=True)
+        with right:
+            st.markdown("**개정 후**")
+            st.markdown(diff_html(new_seg) if c["현재"] else "(삭제)", unsafe_allow_html=True)
+
+    def header(c):
+        when = ", ".join(f"{fmt(d)} {kind}".strip() for d, kind in c["이력"])
+        tag = "⏳ 시행 예정 · " if c["시행예정"] else ""
+        return f"{tag}{short_name(c['법령명'])} {c['조문']}({c['제목']}) [{c['구분']}] — 시행 {when}"
+
+    def reason(c):
+        return f"{short_name(c['법령명'])} {c['조문']} {c['구분']}({fmt(c['이력'][-1][0])} 시행)"
+
+    st.subheader("📌 취업규칙에 관련 조항이 있는 개정")
+    st.caption("법이 바뀐 내용을 보고, 고쳐야 할 취업규칙 조항을 체크하면 신구대조표에 들어갑니다.")
+    for i, c in enumerate(related):
+        with st.expander(header(c), expanded=False):
+            law_diff(c)
+            st.markdown("**관련 취업규칙 조항**")
+            for label in c["관련"]:
+                a = next(x for x in body if x["조항"] == label)
+                if st.checkbox(f"{label}({a['제목']}) 신구대조표에 추가", key=f"law-{i}-{label}"):
+                    row = picked.setdefault(label, {"구분": "개정", "조항": label, "현행": a["내용"],
+                                                    "개정안": a["내용"], "사유": ""})
+                    row["사유"] = "\n".join(filter(None, [row["사유"], reason(c)]))
+                st.text(a["내용"])
+
+    new_rows = []
+    if unmatched:
+        st.subheader("❔ 취업규칙에 관련 조항을 찾지 못한 개정")
+        st.caption("취업규칙에 둘 필요가 있는 내용이면 체크해 신설 조항 초안으로 넣으세요.")
+        for i, c in enumerate(unmatched):
+            with st.expander(header(c)):
+                law_diff(c)
+                if c["현재"] and st.checkbox("신설 조항으로 신구대조표에 추가", key=f"law-new-{i}"):
+                    new_rows.append({"구분": "신설", "조항": "", "현행": "", "개정안": draft_new_article(c),
+                                     "사유": reason(c)})
+    if others:
+        with st.expander(f"기타 개정 {len(others)}건 (벌칙·위원회 등 취업규칙과 관련이 적은 조문)"):
+            for c in others:
+                st.markdown(f"- {header(c)}")
+    return list(picked.values()) + new_rows
+
+
+def revision_tab(articles, required, findings, file_name, law_rows=()):
     mode = st.radio("만드는 방법", ["점검 결과로 개정안 초안 만들기", "개정본 PDF와 비교하기"], horizontal=True)
 
     if mode.startswith("점검"):
         st.caption("위반 의심·확인 필요 항목과 빠진 필수 기재사항으로 개정안 초안을 만들었습니다. "
                    "사업장 실정에 맞게 고친 뒤 내려받으세요. 신설 조항의 '제○조'와 '○○' 부분은 직접 채워 주세요.")
         rows = draft_rows(articles, required, findings)
+        by_label = {r["조항"]: r for r in rows if r["조항"]}
+        for r in law_rows:  # '법 개정 반영' 탭에서 고른 조항
+            if r["조항"] in by_label:
+                by_label[r["조항"]]["사유"] += "\n" + r["사유"]
+            else:
+                rows.append(dict(r))
         body = [a for a in articles if not a["부칙"]]
         extra = st.multiselect("직접 개정할 조항 추가", [a["조항"] for a in body],
                                format_func=lambda x: next(f"{x}({a['제목']})" for a in body if a["조항"] == x))
@@ -146,8 +252,8 @@ with st.sidebar:
     st.header("법령 데이터")
     laws = db.summary()
     if laws:
-        for name, date, count in laws:
-            st.caption(f"{name} · 시행 {date} · {count}개 조문")
+        for name, effective, count in laws:
+            st.caption(f"{name} · 시행 {effective} · {count}개 조문")
     else:
         st.warning("법령 데이터가 없습니다. 이 프로그램과 같은 폴더에서 download_laws.py를 실행하세요.")
         st.caption(f"찾은 위치: {LAWS_DIR}")
@@ -182,7 +288,8 @@ c2.metric("필수 기재사항 누락", sum(r["상태"] in (MISSING, PARTIAL) fo
 c3.metric("위반 의심", sum(f["상태"] == VIOLATION for f in findings))
 c4.metric("확인 필요", sum(f["상태"] == REVIEW for f in findings))
 
-tab_req, tab_check, tab_rev, tab_list, tab_report = st.tabs(["① 필수 기재사항", "② 위반 점검", "③ 신구대조표", "④ 조항 목록", "⑤ 보고서 다운로드"])
+tab_req, tab_check, tab_law, tab_rev, tab_list, tab_report = st.tabs(
+    ["① 필수 기재사항", "② 위반 점검", "③ 법 개정 반영", "④ 신구대조표", "⑤ 조항 목록", "⑥ 보고서 다운로드"])
 
 with tab_req:
     st.write("근로기준법 제93조에 따라 취업규칙에 반드시 적어야 하는 사항입니다.")
@@ -219,8 +326,11 @@ with tab_list:
     with st.expander("PDF에서 추출한 전체 텍스트"):
         st.text(text)
 
+with tab_law:
+    law_rows = law_change_tab(articles, text)
+
 with tab_rev:
-    final_rows = revision_tab(articles, required, findings, uploaded.name)
+    final_rows = revision_tab(articles, required, findings, uploaded.name, law_rows)
 
 with tab_report:
     st.write("점검 결과를 엑셀 파일로 내려받습니다. (필수기재사항, 위반점검, 조항목록, 신구대조표 시트)")
