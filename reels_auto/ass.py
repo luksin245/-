@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from . import tier as tierlist
+from .analyze import normalize_top
 from .project import Project
 
 W, H = 1080, 1920
@@ -188,7 +189,7 @@ def build_ass(p: Project) -> str:
     y = CAPTION_Y
     for c in p.captions:
         if c.text.strip() and c.end > c.start:
-            out.append(line(2, c.start, min(c.end, end), "Caption", f"{{\\an5\\pos({W // 2},{y})}}" + esc(c.text)))
+            out.append(line(2, c.start, min(c.end, end), "Caption", f"{{\\an5\\pos({W // 2},{y})}}" + esc(normalize_top(c.text))))
     return "".join(out)
 
 

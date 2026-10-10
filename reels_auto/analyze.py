@@ -16,12 +16,26 @@ RANK_KOREAN = re.compile(r"^(일|이|삼|사|오|육|칠)위")
 ORDINAL = re.compile(r"^(?:(첫|두|세|네|다섯|여섯|일곱)\s*번\s*째|(첫|둘|셋|넷|다섯|여섯|일곱)째|([1-7])\s*번\s*(?:째|은|는|이|으로)|([1-7])\.$)")
 ORDINAL_NUM = {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4, "다섯": 5, "여섯": 6, "일곱": 7}
 # 첫 문장에서 개수 찾기: "TOP 3", "탑 5", "3가지", "세 가지"
-COUNT_TOP = re.compile(r"(?:TOP|탑)\s*([2-7])", re.I)
+COUNT_TOP = re.compile(r"(?:TOP|탑|톱)\s*([2-7])", re.I)
 COUNT_KINDS = re.compile(r"(?:([2-7])|(두|세|네|다섯|여섯|일곱))\s*가지")
 
 
+# 자막에서 "탑3", "탑 쓰리", "톱5", "top3" → "TOP 3" 처럼 영어 대문자로 통일
+TOP_NUM_WORDS = {"원": 1, "투": 2, "쓰리": 3, "포": 4, "파이브": 5, "식스": 6, "세븐": 7, "에잇": 8, "나인": 9, "텐": 10}
+# 숫자를 말로 한 경우("탑 원래")는 뒤에 조사만 붙을 때만 바꾼다
+TOP_WORD = re.compile(r"(?<![가-힣A-Za-z])(?:탑|톱|top)\s*(?:(\d{1,2})(?![0-9])|(" + "|".join(TOP_NUM_WORDS)
+                      + r")(?=$|[^가-힣]|(?:는|은|를|을|가|이|에|의|도|까지|부터)(?![가-힣])))", re.I)
+
+
+def normalize_top(text: str) -> str:
+    def repl(m: re.Match) -> str:
+        return f"TOP {m.group(1) or TOP_NUM_WORDS[m.group(2)]}"
+
+    return TOP_WORD.sub(repl, text)
+
+
 def _clean(text: str) -> str:
-    return text.strip().rstrip(".,")
+    return normalize_top(text.strip().rstrip(".,"))
 
 
 def make_captions(words: list[Word], duration: float, max_chars: int = 12, max_gap: float = 0.35) -> list[Caption]:
@@ -264,7 +278,7 @@ def suggest_title(words: list[Word], style: str = "none", count: int = 0) -> str
     text = _clean(" ".join(w.text.strip() for w in words[: end + 1])).rstrip("?!")
     # "노무사님, …" 처럼 부르는 말로 시작하면 떼어낸다
     text = re.sub(r"^\S*(님|씨|선생)[,!]?\s+", "", text)
-    text = re.sub(r"\s*(TOP|탑)\s*[0-9].*$", "", text, flags=re.I)
+    text = re.sub(r"\s*(TOP|탑|톱)\s*[0-9].*$", "", text, flags=re.I)
     if style == "tier" and "티어" not in text.replace("티어리스트", "티어"):
         return "티어리스트"
     if style == "tier" and not text.endswith(("티어리스트", "탄")) and "티어리스트" not in text:
