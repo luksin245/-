@@ -247,6 +247,11 @@ textarea:disabled { opacity: 0.5; }
   cursor: pointer;
 }
 .aljal:disabled { opacity: 0.45; cursor: default; }
+form.composer > textarea { flex: none; width: 100%; }
+.actions { display: flex; gap: 8px; }
+.actions .aljal, .actions .send { flex: 1; padding: 12px 10px; font-size: 16px; border-radius: 999px; }
+.toggle { font-size: 12px; color: var(--dim); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.toggle input { accent-color: var(--violet); margin: 0; }
 .hint { font-size: 12px; color: var(--dim); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-height: 18px; }
 .hint .btn { padding: 1px 8px; }
 
@@ -320,15 +325,18 @@ textarea:disabled { opacity: 0.5; }
     </div>
   </nav>
 
+  <div class="hint" style="padding-top:8px"><label class="toggle"><input type="checkbox" id="autoSend"> 알잘딱 누르면 정리해서 바로 보내기</label></div>
+
   <!-- JARVIS chat -->
   <section class="view" id="viewChat">
     <main class="log" id="log" aria-live="polite"></main>
     <form class="composer" id="form">
-      <div class="row">
-        <span class="prompt" aria-hidden="true">&gt;</span>
-        <textarea id="msg" rows="1" placeholder="말하거나 입력하세요 · 오타는 자동 보정 (Enter 전송)" aria-label="자비스에게 보낼 메시지"></textarea>
-        <button class="send" id="send" type="submit">전송</button>
+      <textarea id="msg" rows="2" placeholder="자비스에게 말하기 · 오타는 자동 보정" aria-label="자비스에게 보낼 메시지"></textarea>
+      <div class="actions">
+        <button class="aljal" id="caljal" type="button">✦ 알잘딱</button>
+        <button class="send" id="send" type="submit">↑ 보내기</button>
       </div>
+      <div class="hint"><span id="chint"></span></div>
     </form>
   </section>
 
@@ -350,14 +358,12 @@ textarea:disabled { opacity: 0.5; }
     </div>
     <main class="log" id="dlog" aria-live="polite"></main>
     <form class="composer" id="dform">
-      <div class="row">
-        <textarea id="dmsg" rows="2" placeholder="이 세션에 보낼 말 · 대충 말하고 알잘딱을 누르세요" aria-label="세션에 보낼 메시지"></textarea>
-      </div>
-      <div class="row">
-        <div class="hint" id="dhint" style="flex:1"></div>
+      <textarea id="dmsg" rows="2" placeholder="이 세션에 보낼 말 · 대충 말하고 알잘딱을 누르세요" aria-label="세션에 보낼 메시지"></textarea>
+      <div class="actions">
         <button class="aljal" id="aljal" type="button">✦ 알잘딱</button>
-        <button class="send" id="dsend" type="submit">보내기</button>
+        <button class="send" id="dsend" type="submit">↑ 보내기</button>
       </div>
+      <div class="hint"><span id="dhint"></span></div>
     </form>
   </section>
 </div>
@@ -368,6 +374,7 @@ textarea:disabled { opacity: 0.5; }
   const STORE_KEY = "jarvis.v2";
   const SEEN_KEY = "jarvis.seen";
   const PIN_KEY = "jarvis.pins";
+  const AUTO_KEY = "jarvis.autoSend";
   const HISTORY_LIMIT = 24;
   const GREETING = "안녕하세요, 여니. 모든 시스템 정상 작동 중입니다. 편하게 말씀하세요. 음성 인식이 조금 틀려도 제가 알아듣겠습니다.";
   const SUGGESTIONS = ["오늘 할 일 정리하는 것 좀 도와줘", "자기소개 해봐", "파이썬으로 간단한 타이머 만들어줘", "기분 전환할 만한 농담 하나"];
@@ -625,7 +632,7 @@ textarea:disabled { opacity: 0.5; }
       if (e && e.code === "not_granted") goOffline("오프라인 · 권한 없음");
     } finally {
       busy = false; ctl = null;
-      sendBtn.textContent = "전송"; sendBtn.classList.remove("stop");
+      sendBtn.textContent = "↑ 보내기"; sendBtn.classList.remove("stop");
       if (app.dataset.state !== "offline" && !(canSpeak && state.voice && speechSynthesis.speaking)) setState("idle", "온라인 · 대기 중");
       scrollDown(log);
     }
@@ -634,7 +641,7 @@ textarea:disabled { opacity: 0.5; }
     sample = null;
     setState("offline", label);
     box.disabled = true; sendBtn.disabled = true;
-    $("aljal").hidden = true;
+    showAljal(false);
   }
 
   function autosize(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 180) + "px"; }
@@ -931,17 +938,17 @@ textarea:disabled { opacity: 0.5; }
 
   // --- send to session ---
   let dsending = false;
-  async function sendToSession() {
+  async function sendToSession(note) {
     const text = dbox.value.trim();
     if (!text || dsending || !current || !mcp) return;
-    dsending = true; dsend.disabled = true; dsend.textContent = "보내는 중";
+    dsending = true; dsend.disabled = true; dsend.textContent = "보내는 중…";
     dhint.textContent = "";
     try {
       await mcp.callTool(SERVER, "send_message", { session_id: current.id, message: text });
       pending.push({ text, t: Date.now() });
-      dbox.value = ""; autosize(dbox); undoText = null;
+      dbox.value = ""; autosize(dbox);
       renderEvents(); scrollDown(dlog);
-      dhint.textContent = "보냈어요. 답변은 30초마다 자동으로 확인해요.";
+      dhint.textContent = (note ? note + " " : "보냈어요. ") + "답변은 30초마다 자동으로 확인해요.";
       try { await mcp.invalidate(SERVER, "list_sessions"); } catch (e) {}
     } catch (e) {
       const code = e && e.code;
@@ -951,55 +958,81 @@ textarea:disabled { opacity: 0.5; }
         dhint.textContent = mcpErrCopy(e).text;
       }
     } finally {
-      dsending = false; dsend.disabled = false; dsend.textContent = "보내기";
+      dsending = false; dsend.disabled = false; dsend.textContent = "↑ 보내기";
     }
   }
   $("dform").addEventListener("submit", (e) => { e.preventDefault(); sendToSession(); });
+  dbox.addEventListener("input", () => { dhint.textContent = ""; });
   dbox.addEventListener("input", () => autosize(dbox));
 
-  // --- 알잘딱: tidy a rough spoken draft into a clear request ---
-  let undoText = null, aljalBusy = false;
-  async function aljal() {
-    const draft = dbox.value.trim();
-    if (!draft || !sample || aljalBusy) return;
-    aljalBusy = true; aljalBtn.disabled = true; aljalBtn.textContent = "다듬는 중…";
-    dhint.textContent = "";
+  // --- 알잘딱: tidy a rough spoken draft into a clear request, then (optionally) send it ---
+  let autoSend = readJSON(AUTO_KEY, true) !== false;
+  const autoBox = $("autoSend");
+  autoBox.checked = autoSend;
+  autoBox.onchange = () => { autoSend = autoBox.checked; writeJSON(AUTO_KEY, autoSend); };
+
+  async function tidy(draft, target) {
     const prompt = [
-      "아래 '원문'은 사용자가 음성 인식으로 말한 내용이야. 이걸 Claude Code(코딩 에이전트)에게 보낼 요청문으로 다듬어줘.",
+      `아래 '원문'은 사용자가 음성 인식으로 말한 내용이야. 이걸 ${target}으로 다듬어줘.`,
       "규칙:",
-      "- 음성 인식 오류를 바로잡아: 소리가 비슷한 다른 단어, 띄어쓰기, 빠진 조사, 한글로 받아 적힌 영어 기술 용어(예: 깃허브→GitHub, 리액트→React, 커밋→commit은 그대로 둬도 됨).",
-      "- '음..', '어', 같은 말 반복, 말하다 고친 부분 같은 군더더기는 지워.",
+      "- 음성 인식·발음 때문에 생긴 오류를 바로잡아: 소리가 비슷한 다른 단어, 띄어쓰기, 빠진 조사, 한글로 받아 적힌 영어 기술 용어(예: 깃허브→GitHub, 리액트→React, 아티팩트→artifact). 문맥상 가장 그럴듯한 단어를 골라.",
+      "- '음..', '어', '그러니까' 같은 말버릇, 같은 말 반복, 말하다가 고친 앞부분 같은 군더더기는 지우고 고친 쪽을 살려.",
       "- 사용자의 의도와 요구사항은 하나도 빼거나 새로 더하지 마. 모호한 부분은 추측해서 채우지 말고 원문 표현을 살려.",
-      "- 요구가 여러 개면 번호 목록으로 정리하고, 하나면 한두 문장으로 써.",
+      "- 요구가 여러 개면 번호 목록으로, 하나면 한두 문장으로 정리해. 배경 설명이 있으면 요청 앞에 한 줄로 둬.",
       "- 원문의 말투(반말/존댓말)를 따르되 간결하게.",
-      "- 다듬은 요청문만 출력해. 설명이나 머리말은 붙이지 마.",
-      current ? `\n이 요청을 받을 세션의 주제: ${current.title || ""}` : "",
+      "- 다듬은 글만 출력해. 설명, 머리말, 따옴표는 붙이지 마.",
       "\n원문:\n" + draft,
     ].join("\n");
-    try {
-      const { text } = await sample(prompt, { modelTier: "quick", cache: false });
-      const clean = text.trim();
-      if (clean) {
-        undoText = dbox.value;
-        dbox.value = clean; autosize(dbox);
-        dhint.innerHTML = '<span>다듬었어요. 확인하고 보내세요.</span>';
-        const u = document.createElement("button"); u.type = "button"; u.className = "btn"; u.textContent = "되돌리기";
-        u.onclick = () => { if (undoText != null) { dbox.value = undoText; autosize(dbox); undoText = null; dhint.textContent = ""; } };
-        dhint.append(u);
-      }
-    } catch (e) {
-      if (e && e.code === "not_granted") { aljalBtn.hidden = true; dhint.textContent = "Claude 사용이 허용되지 않아 알잘딱을 쓸 수 없어요."; }
-      else dhint.textContent = sampleErr(e && e.code);
-    } finally {
-      aljalBusy = false; aljalBtn.disabled = false; aljalBtn.textContent = "✦ 알잘딱";
-    }
+    const { text } = await sample(prompt, { cache: false });
+    return text.trim().replace(/^["“](.*)["”]$/s, "$1");
   }
-  aljalBtn.onclick = aljal;
+
+  function wireAljal(btn, ta, hintEl, target, canSend, doSend) {
+    let undo = null, working = false;
+    btn.onclick = async () => {
+      const draft = ta.value.trim();
+      if (!draft || !sample || working || !canSend()) return;
+      working = true; btn.disabled = true; btn.textContent = "정리 중…";
+      ta.disabled = true;
+      hintEl.textContent = "알잘딱이 정리하고 있어요…";
+      try {
+        const clean = await tidy(draft, target());
+        if (!clean) { hintEl.textContent = "정리 결과가 비어 있어요. 다시 눌러 주세요."; return; }
+        ta.disabled = false;
+        ta.value = clean; autosize(ta);
+        if (autoSend) {
+          hintEl.textContent = "";
+          await doSend(clean);
+        } else {
+          undo = draft;
+          hintEl.textContent = "정리했어요. 확인하고 보내세요. ";
+          const u = document.createElement("button"); u.type = "button"; u.className = "btn"; u.textContent = "되돌리기";
+          u.onclick = () => { if (undo != null) { ta.value = undo; autosize(ta); undo = null; hintEl.textContent = ""; } };
+          hintEl.append(u);
+        }
+      } catch (e) {
+        if (e && e.code === "not_granted") { showAljal(false); hintEl.textContent = "Claude 사용이 허용되지 않아 알잘딱을 쓸 수 없어요."; }
+        else hintEl.textContent = sampleErr(e && e.code);
+      } finally {
+        working = false; ta.disabled = false; btn.disabled = false; btn.textContent = "✦ 알잘딱";
+      }
+    };
+  }
+  wireAljal(aljalBtn, dbox, dhint,
+    () => "Claude Code(코딩 에이전트)에게 보낼 작업 요청문" + (current && current.title ? ` (이 세션의 주제: ${current.title})` : ""),
+    () => !!(current && mcp && !dsending),
+    () => sendToSession("알잘딱으로 정리해서 보냈어요."));
+  wireAljal($("caljal"), box, $("chint"),
+    () => "AI 비서 자비스에게 하는 말",
+    () => !busy,
+    (clean) => send(clean));
+  box.addEventListener("input", () => { $("chint").textContent = ""; });
+  function showAljal(v) { aljalBtn.hidden = !v; $("caljal").hidden = !v; }
 
   // ---------- boot ----------
   syncVoiceBtn();
   renderAll();
-  box.disabled = true; sendBtn.disabled = true; aljalBtn.hidden = true;
+  box.disabled = true; sendBtn.disabled = true; showAljal(false);
   const use = (name) => { try { return window.claude ? window.claude.use(name) : Promise.resolve(null); } catch (e) { return Promise.resolve(null); } };
   use("sample").then((s) => {
     sample = s;
@@ -1010,7 +1043,7 @@ textarea:disabled { opacity: 0.5; }
       log.append(n);
       return;
     }
-    box.disabled = false; sendBtn.disabled = false; aljalBtn.hidden = false;
+    box.disabled = false; sendBtn.disabled = false; showAljal(true);
     setState("idle", "온라인 · 대기 중");
   }, () => goOffline("오프라인"));
   use("mcp").then((m) => {
