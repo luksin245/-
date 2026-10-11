@@ -3,17 +3,21 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one-screen HUD console — reactor header, scrolling transcript, docked command line. Deliberately dark-only. */
+/* Layout: one-screen HUD console — reactor header, view tabs (JARVIS chat / Claude Code sessions), docked command line. Deliberately dark-only. */
 :root {
   --bg: #04080c;
   --panel: #0a1620;
+  --panel-2: #0e1d29;
   --line: #173444;
   --fg: #d9eef5;
   --dim: #6d8c99;
   --cyan: #4fd8ff;
   --cyan-soft: rgba(79, 216, 255, 0.12);
   --amber: #ffb547;
+  --amber-soft: rgba(255, 181, 71, 0.12);
+  --violet: #a99bff;
   --danger: #ff7a7a;
+  --ok: #6fe3a5;
   --display: "Rajdhani", "Noto Sans KR", system-ui, sans-serif;
   --body: "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -28,6 +32,7 @@ body {
   font-size: 15px;
   line-height: 1.65;
 }
+button { font: inherit; }
 .app {
   height: 100%;
   max-width: 860px;
@@ -42,15 +47,14 @@ header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  padding-block: 18px 12px;
-  border-bottom: 1px solid var(--line);
+  gap: 12px 16px;
+  padding-block: 14px 10px;
 }
-.ident { display: flex; align-items: center; gap: 16px; min-width: 0; flex: 1; }
+.ident { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; }
 .name {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 30px;
+  font-size: 28px;
   letter-spacing: 0.22em;
   line-height: 1;
   margin: 0;
@@ -66,39 +70,29 @@ header {
   align-items: center;
   gap: 8px;
 }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
-.app[data-state="thinking"] .dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
-.app[data-state="offline"] .dot { background: var(--danger); box-shadow: none; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); flex: none; }
+.app[data-state="thinking"] .status .dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.app[data-state="offline"] .status .dot { background: var(--danger); box-shadow: none; }
 .clock { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.clock .time { font-size: 20px; color: var(--cyan); letter-spacing: 0.04em; }
+.clock .time { font-size: 18px; color: var(--cyan); letter-spacing: 0.04em; }
 .clock .date { font-size: 11px; color: var(--dim); letter-spacing: 0.08em; }
 
 /* arc reactor */
-.reactor { --glow: var(--cyan); width: 76px; aspect-ratio: 1; position: relative; flex: none; max-width: 100%; }
+.reactor { --glow: var(--cyan); width: 64px; aspect-ratio: 1; position: relative; flex: none; max-width: 100%; }
 .app[data-state="thinking"] .reactor { --glow: var(--amber); }
 .app[data-state="offline"] .reactor { --glow: var(--dim); }
 .ring, .core { position: absolute; border-radius: 50%; }
 .r1 { inset: 0; border: 1px solid var(--line); box-shadow: inset 0 0 18px var(--cyan-soft); }
 .r2 {
-  inset: 6px;
+  inset: 5px;
   background: repeating-conic-gradient(var(--glow) 0 7deg, transparent 7deg 30deg);
   -webkit-mask: radial-gradient(circle, transparent 54%, #000 55%, #000 72%, transparent 73%);
   mask: radial-gradient(circle, transparent 54%, #000 55%, #000 72%, transparent 73%);
   opacity: 0.85;
   animation: spin 14s linear infinite;
 }
-.r3 {
-  inset: 20px;
-  border: 2px solid var(--glow);
-  border-left-color: transparent;
-  border-right-color: transparent;
-  animation: spin 5s linear infinite reverse;
-}
-.core {
-  inset: 28px;
-  background: radial-gradient(circle, #ffffff 0%, var(--glow) 42%, transparent 72%);
-  animation: pulse 3.2s ease-in-out infinite;
-}
+.r3 { inset: 17px; border: 2px solid var(--glow); border-left-color: transparent; border-right-color: transparent; animation: spin 5s linear infinite reverse; }
+.core { inset: 23px; background: radial-gradient(circle, #ffffff 0%, var(--glow) 42%, transparent 72%); animation: pulse 3.2s ease-in-out infinite; }
 .app[data-state="thinking"] .r2 { animation-duration: 2.2s; }
 .app[data-state="thinking"] .r3 { animation-duration: 0.9s; }
 .app[data-state="thinking"] .core { animation-duration: 0.9s; }
@@ -106,41 +100,72 @@ header {
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%, 100% { opacity: 0.75; transform: scale(0.92); } 50% { opacity: 1; transform: scale(1.06); } }
 
-.tools { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+/* ---------- tabs ---------- */
+nav.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  padding: 6px 14px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--cyan); }
+.badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  background: var(--amber);
+  color: var(--bg);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 18px;
+}
+.tab-tools { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
 .btn {
   font-family: var(--mono);
   font-size: 12px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--dim);
   background: transparent;
   border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 5px 10px;
+  border-radius: 4px;
+  padding: 4px 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .btn:hover { color: var(--fg); border-color: var(--dim); }
 .btn[aria-pressed="true"] { color: var(--cyan); border-color: var(--cyan); background: var(--cyan-soft); }
-.btn:focus-visible, .send:focus-visible, textarea:focus-visible, .chip:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.btn:focus-visible, .send:focus-visible, textarea:focus-visible, .chip:focus-visible, .tab:focus-visible, .card:focus-visible, .aljal:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---------- transcript ---------- */
-#log {
+.log {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-block: 20px;
+  padding-block: 18px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
 }
 .msg { min-width: 0; max-width: 100%; }
-.msg .meta {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: var(--dim);
-  margin-bottom: 4px;
-}
+.msg .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--dim); margin-bottom: 4px; }
 .msg.jarvis .meta b { color: var(--cyan); font-weight: 500; }
+.msg.claude .meta b { color: var(--violet); font-weight: 500; }
 .msg.user { align-self: flex-end; max-width: min(85%, 600px); }
 .msg.user .meta { text-align: right; }
 .msg.user .body {
@@ -151,69 +176,45 @@ header {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.msg.jarvis .body { overflow-wrap: anywhere; max-width: 68ch; }
+.msg.pending .body { border-style: dashed; }
+.msg.jarvis .body, .msg.claude .body { overflow-wrap: anywhere; max-width: 72ch; }
 .body p { margin: 0 0 0.6em; }
 .body p:last-child { margin-bottom: 0; }
+.body p.h { font-weight: 700; color: #ffffff; margin-top: 0.8em; }
 .body ul { margin: 0.2em 0 0.6em; padding-left: 1.2em; }
 .body code { font-family: var(--mono); font-size: 0.88em; background: var(--panel); padding: 1px 5px; border-radius: 3px; }
-.body pre {
-  font-family: var(--mono);
-  font-size: 13px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 10px 12px;
-  overflow-x: auto;
-  margin: 0.4em 0 0.8em;
-}
+.body pre { font-family: var(--mono); font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0.4em 0 0.8em; }
 .body pre code { background: none; padding: 0; }
 .body strong { color: #ffffff; }
+.tbl { overflow-x: auto; margin: 0.4em 0 0.8em; }
+.tbl table { border-collapse: collapse; font-size: 13px; }
+.tbl th, .tbl td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
+.tbl th { background: var(--panel); }
 .thinking { color: var(--amber); font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; }
 .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
 .note { color: var(--dim); font-size: 12px; margin-top: 6px; }
-.fix {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--dim);
-  border-left: 1px dashed var(--line);
-  padding-left: 10px;
-  margin-bottom: 8px;
-  overflow-wrap: anywhere;
-}
+.fix { font-family: var(--mono); font-size: 12px; color: var(--dim); border-left: 1px dashed var(--line); padding-left: 10px; margin-bottom: 8px; overflow-wrap: anywhere; }
 .fix b { color: var(--amber); font-weight: 500; letter-spacing: 0.08em; }
+.older { align-self: center; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-  font: inherit;
-  font-size: 13px;
-  color: var(--fg);
-  background: var(--cyan-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 5px 13px;
-  cursor: pointer;
-}
+.chip { font-size: 13px; color: var(--fg); background: var(--cyan-soft); border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px; cursor: pointer; }
 .chip:hover { border-color: var(--cyan); }
 
 /* ---------- composer ---------- */
-form {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  padding-block: 12px 16px;
-  border-top: 1px solid var(--line);
-}
+form.composer { display: flex; flex-direction: column; gap: 8px; padding-block: 10px 14px; border-top: 1px solid var(--line); }
+.row { display: flex; gap: 8px; align-items: flex-end; }
 .prompt { font-family: var(--mono); color: var(--cyan); padding-bottom: 9px; flex: none; }
 textarea {
   flex: 1;
   min-width: 0;
   resize: none;
-  max-height: 160px;
+  max-height: 180px;
   font: inherit;
   color: var(--fg);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 9px 12px;
 }
 textarea::placeholder { color: var(--dim); }
@@ -223,26 +224,74 @@ textarea:disabled { opacity: 0.5; }
   font-family: var(--display);
   font-weight: 700;
   font-size: 15px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   color: var(--bg);
   background: var(--cyan);
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 9px 16px;
   cursor: pointer;
 }
 .send.stop { background: var(--amber); }
 .send:disabled { opacity: 0.4; cursor: default; }
+.aljal {
+  flex: none;
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--bg);
+  background: var(--violet);
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.aljal:disabled { opacity: 0.45; cursor: default; }
+.hint { font-size: 12px; color: var(--dim); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-height: 18px; }
+.hint .btn { padding: 1px 8px; }
+
+/* ---------- sessions ---------- */
+.list { flex: 1; min-height: 0; overflow-y: auto; padding-block: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.list-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--dim); font-family: var(--mono); }
+.card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  text-align: left;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.card:hover { border-color: var(--dim); }
+.card.unread { border-color: var(--amber); background: linear-gradient(var(--amber-soft), var(--amber-soft)), var(--panel); }
+.card .title { font-weight: 700; font-size: 16px; min-width: 0; overflow-wrap: anywhere; }
+.card .when { font-family: var(--mono); font-size: 11px; color: var(--dim); text-align: right; white-space: nowrap; }
+.card .line { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.card .summary { grid-column: 1 / -1; font-size: 13px; color: var(--dim); min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pill { font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; line-height: 19px; color: var(--dim); white-space: nowrap; }
+.pill.working { color: var(--amber); border-color: var(--amber); }
+.pill.blocked { color: var(--bg); background: var(--amber); border-color: var(--amber); }
+.pill.review { color: var(--cyan); border-color: var(--cyan); }
+.pill.failed { color: var(--danger); border-color: var(--danger); }
+.pill.new { color: var(--bg); background: var(--amber); border-color: var(--amber); }
+.pill.pin { color: var(--cyan); border-color: var(--cyan); }
+.empty { color: var(--dim); font-size: 14px; padding: 18px 2px; }
+.empty .btn { margin-top: 10px; }
+
+.dhead { display: flex; align-items: center; gap: 10px; padding-block: 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.dhead .dtitle { font-weight: 700; font-size: 16px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
 
 @media (max-width: 520px) {
-  .name { font-size: 24px; }
-  .reactor { width: 60px; }
-  .r3 { inset: 16px; } .core { inset: 22px; }
-  .clock { text-align: left; }
+  .name { font-size: 22px; }
+  .reactor { width: 50px; }
+  .r3 { inset: 13px; } .core { inset: 18px; }
+  .tab { padding-inline: 10px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .r2, .r3, .core { animation: none !important; }
-}
+@media (prefers-reduced-motion: reduce) { .r2, .r3, .core { animation: none !important; } }
 </style>
 
 <div class="app" id="app" data-state="idle">
@@ -260,54 +309,89 @@ textarea:disabled { opacity: 0.5; }
       <div class="time" id="time">--:--:--</div>
       <div class="date" id="date"></div>
     </div>
-    <div class="tools">
-      <button class="btn" id="newChat" type="button">새 대화</button>
-      <button class="btn" id="voice" type="button" aria-pressed="false">음성 응답</button>
-    </div>
   </header>
 
-  <main id="log" aria-live="polite"></main>
+  <nav class="tabs" role="tablist">
+    <button class="tab" id="tabChat" role="tab" aria-selected="true" type="button">자비스</button>
+    <button class="tab" id="tabSessions" role="tab" aria-selected="false" type="button">세션 <span class="badge" id="unreadBadge" hidden>0</span></button>
+    <div class="tab-tools" id="chatTools">
+      <button class="btn" id="newChat" type="button">새 대화</button>
+      <button class="btn" id="voice" type="button" aria-pressed="false">음성</button>
+    </div>
+  </nav>
 
-  <form id="form">
-    <span class="prompt" aria-hidden="true">&gt;</span>
-    <textarea id="msg" rows="1" placeholder="말하거나 입력하세요 · 음성 입력 오타는 자동 보정 (Enter 전송)" aria-label="메시지"></textarea>
-    <button class="send" id="send" type="submit">전송</button>
-  </form>
+  <!-- JARVIS chat -->
+  <section class="view" id="viewChat">
+    <main class="log" id="log" aria-live="polite"></main>
+    <form class="composer" id="form">
+      <div class="row">
+        <span class="prompt" aria-hidden="true">&gt;</span>
+        <textarea id="msg" rows="1" placeholder="말하거나 입력하세요 · 오타는 자동 보정 (Enter 전송)" aria-label="자비스에게 보낼 메시지"></textarea>
+        <button class="send" id="send" type="submit">전송</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Claude Code sessions -->
+  <section class="view" id="viewSessions" hidden>
+    <div class="list" id="list">
+      <div class="empty">세션 목록을 불러오는 중…</div>
+    </div>
+  </section>
+
+  <!-- one session -->
+  <section class="view" id="viewDetail" hidden>
+    <div class="dhead">
+      <button class="btn" id="back" type="button">← 목록</button>
+      <div class="dtitle" id="dtitle"></div>
+      <span class="pill" id="dstatus"></span>
+      <button class="btn" id="pinBtn" type="button" aria-pressed="false">고정</button>
+      <button class="btn" id="drefresh" type="button">새로고침</button>
+    </div>
+    <main class="log" id="dlog" aria-live="polite"></main>
+    <form class="composer" id="dform">
+      <div class="row">
+        <textarea id="dmsg" rows="2" placeholder="이 세션에 보낼 말 · 대충 말하고 알잘딱을 누르세요" aria-label="세션에 보낼 메시지"></textarea>
+      </div>
+      <div class="row">
+        <div class="hint" id="dhint" style="flex:1"></div>
+        <button class="aljal" id="aljal" type="button">✦ 알잘딱</button>
+        <button class="send" id="dsend" type="submit">보내기</button>
+      </div>
+    </form>
+  </section>
 </div>
 
 <script>
 (() => {
+  const SERVER = "Claude Code Remote";
   const STORE_KEY = "jarvis.v2";
+  const SEEN_KEY = "jarvis.seen";
+  const PIN_KEY = "jarvis.pins";
   const HISTORY_LIMIT = 24;
   const GREETING = "안녕하세요, 여니. 모든 시스템 정상 작동 중입니다. 편하게 말씀하세요. 음성 인식이 조금 틀려도 제가 알아듣겠습니다.";
-  const SUGGESTIONS = [
-    "오늘 할 일 정리하는 것 좀 도와줘",
-    "자기소개 해봐",
-    "파이썬으로 간단한 타이머 만들어줘",
-    "기분 전환할 만한 농담 하나",
-  ];
+  const SUGGESTIONS = ["오늘 할 일 정리하는 것 좀 도와줘", "자기소개 해봐", "파이썬으로 간단한 타이머 만들어줘", "기분 전환할 만한 농담 하나"];
   const DAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
   const $ = (id) => document.getElementById(id);
-  const app = $("app"), log = $("log"), form = $("form"), box = $("msg"), sendBtn = $("send");
+  const app = $("app");
   const statusEl = $("status"), voiceBtn = $("voice");
 
-  // ---------- persistence (per-viewer only) ----------
-  function load() {
-    try {
-      const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && Array.isArray(s.turns) && s.turns.length) return s;
-    } catch (e) {}
-    return null;
+  // ---------- storage (per-viewer only) ----------
+  function readJSON(key, fallback) {
+    try { const v = JSON.parse(localStorage.getItem(key)); return v == null ? fallback : v; } catch (e) { return fallback; }
   }
-  function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
-  }
+  function writeJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
+
   function fresh() { return { turns: [{ role: "assistant", content: GREETING, t: Date.now() }], voice: state ? state.voice : false }; }
   let state = null;
-  state = load() || fresh();
+  state = (() => { const s = readJSON(STORE_KEY, null); return s && Array.isArray(s.turns) && s.turns.length ? s : null; })() || fresh();
+  const save = () => writeJSON(STORE_KEY, state);
+  let seen = readJSON(SEEN_KEY, null);
+  let pins = readJSON(PIN_KEY, []);
+  if (!Array.isArray(pins)) pins = [];
 
-  // ---------- clock ----------
+  // ---------- clock / time helpers ----------
   const pad = (n) => String(n).padStart(2, "0");
   function tick() {
     const d = new Date();
@@ -316,15 +400,52 @@ textarea:disabled { opacity: 0.5; }
   }
   tick(); setInterval(tick, 1000);
   const hhmm = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  function ago(t) {
+    const s = Math.max(0, (Date.now() - t) / 1000);
+    if (s < 60) return "방금";
+    if (s < 3600) return Math.floor(s / 60) + "분 전";
+    if (s < 86400) return Math.floor(s / 3600) + "시간 전";
+    return Math.floor(s / 86400) + "일 전";
+  }
 
   // ---------- tiny markdown ----------
-  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   function inline(s) {
-    return esc(s)
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   }
-  // A reply may open with "보정: …" when JARVIS fixed a speech-recognition error; show it as a small note.
+  function mdText(part, out) {
+    let para = [], list = [], table = [];
+    const flushP = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
+    const flushL = () => { if (list.length) { out.push("<ul>" + list.map((l) => `<li>${inline(l)}</li>`).join("") + "</ul>"); list = []; } };
+    const flushT = () => {
+      if (!table.length) return;
+      const rows = table.filter((l) => !/^\s*\|[\s:|-]+\|\s*$/.test(l)).map((l) => l.trim().slice(1, -1).split("|").map((c) => inline(c.trim())));
+      out.push('<div class="tbl"><table>' + rows.map((r, i) => "<tr>" + r.map((c) => (i ? `<td>${c}</td>` : `<th>${c}</th>`)).join("") + "</tr>").join("") + "</table></div>");
+      table = [];
+    };
+    for (const raw of part.split("\n")) {
+      const l = raw.replace(/\s+$/, "");
+      if (!l.trim()) { flushP(); flushL(); flushT(); continue; }
+      if (/^\s*\|.*\|$/.test(l)) { flushP(); flushL(); table.push(l); continue; }
+      flushT();
+      const li = l.match(/^\s*(?:[-*]|\d+\.)\s+(.*)$/);
+      if (li) { flushP(); list.push(li[1]); continue; }
+      flushL();
+      const h = l.match(/^#{1,6}\s+(.*)$/);
+      if (h) { flushP(); out.push(`<p class="h">${inline(h[1])}</p>`); continue; }
+      para.push(l);
+    }
+    flushP(); flushL(); flushT();
+  }
+  function md(src) {
+    const out = [];
+    src.split(/```[^\n]*\n?/).forEach((part, i) => {
+      if (i % 2 === 1) out.push(`<pre><code>${esc(part.replace(/\n$/, ""))}</code></pre>`);
+      else mdText(part, out);
+    });
+    return out.join("");
+  }
+  // A JARVIS reply may open with "보정: …" when it fixed a speech-recognition error.
   const FIX_RE = /^\s*>?\s*보정\s*[:：]\s*(.+?)\s*(?:\n|$)/;
   function splitFix(text) {
     const m = text.match(FIX_RE);
@@ -334,42 +455,53 @@ textarea:disabled { opacity: 0.5; }
     const { fix, rest } = splitFix(text);
     return (fix ? `<div class="fix"><b>보정</b> ${esc(fix)}</div>` : "") + md(rest);
   }
-  function md(src) {
-    const out = [];
-    const parts = src.split(/```[^\n]*\n?/);
-    parts.forEach((part, i) => {
-      if (i % 2 === 1) { out.push(`<pre><code>${esc(part.replace(/\n$/, ""))}</code></pre>`); return; }
-      part.split(/\n{2,}/).forEach((block) => {
-        if (!block.trim()) return;
-        const lines = block.split("\n");
-        if (lines.every((l) => /^\s*([-*]|\d+\.)\s+/.test(l) || !l.trim())) {
-          out.push("<ul>" + lines.filter((l) => l.trim()).map((l) => `<li>${inline(l.replace(/^\s*([-*]|\d+\.)\s+/, ""))}</li>`).join("") + "</ul>");
-        } else {
-          out.push(`<p>${lines.map(inline).join("<br>")}</p>`);
-        }
-      });
-    });
-    return out.join("");
-  }
 
-  // ---------- rendering ----------
-  function addMsg(role, text, t) {
+  function makeMsg(kind, label, t, html, text) {
     const el = document.createElement("div");
-    el.className = "msg " + (role === "user" ? "user" : "jarvis");
+    el.className = "msg " + kind;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.innerHTML = role === "user" ? `여니 · ${hhmm(t)}` : `<b>JARVIS</b> · ${hhmm(t)}`;
+    meta.innerHTML = label + (t ? ` · ${hhmm(t)}` : "");
     const body = document.createElement("div");
     body.className = "body";
-    if (role === "user") body.textContent = text; else body.innerHTML = renderReply(text);
+    if (html != null) body.innerHTML = html; else body.textContent = text;
     el.append(meta, body);
-    log.append(el);
-    return { el, body };
+    return { el, body, meta };
+  }
+
+  // ---------- tabs / views ----------
+  let view = "chat";
+  function show(name) {
+    view = name;
+    $("viewChat").hidden = name !== "chat";
+    $("viewSessions").hidden = name !== "sessions";
+    $("viewDetail").hidden = name !== "detail";
+    $("chatTools").hidden = name !== "chat";
+    $("tabChat").setAttribute("aria-selected", String(name === "chat"));
+    $("tabSessions").setAttribute("aria-selected", String(name !== "chat"));
+    if (name !== "detail") stopEvents();
+    if (name !== "chat") startSessions();
+  }
+  $("tabChat").onclick = () => show("chat");
+  $("tabSessions").onclick = () => show("sessions");
+
+  // =====================================================================
+  // JARVIS chat
+  // =====================================================================
+  const log = $("log"), form = $("form"), box = $("msg"), sendBtn = $("send");
+  const scrollDown = (el) => { el.scrollTop = el.scrollHeight; };
+  function setState(s, label) { app.dataset.state = s; statusEl.textContent = label; }
+
+  function addMsg(role, text, t) {
+    const m = role === "user"
+      ? makeMsg("user", "여니", t, null, text)
+      : makeMsg("jarvis", "<b>JARVIS</b>", t, renderReply(text));
+    log.append(m.el);
+    return m;
   }
   function renderSuggestions() {
     const wrap = document.createElement("div");
-    wrap.className = "chips";
-    wrap.id = "chips";
+    wrap.className = "chips"; wrap.id = "chips";
     SUGGESTIONS.forEach((s) => {
       const b = document.createElement("button");
       b.type = "button"; b.className = "chip"; b.textContent = s;
@@ -382,15 +514,13 @@ textarea:disabled { opacity: 0.5; }
     log.textContent = "";
     state.turns.forEach((m) => addMsg(m.role, m.content, m.t));
     if (state.turns.length === 1) renderSuggestions();
-    scrollDown();
+    scrollDown(log);
   }
-  const scrollDown = () => { log.scrollTop = log.scrollHeight; };
-  function setState(s, label) { app.dataset.state = s; statusEl.textContent = label; }
 
-  // ---------- voice ----------
+  // voice output
   const canSpeak = "speechSynthesis" in window;
   if (!canSpeak) voiceBtn.hidden = true;
-  function syncVoiceBtn() { voiceBtn.setAttribute("aria-pressed", String(!!state.voice)); }
+  const syncVoiceBtn = () => voiceBtn.setAttribute("aria-pressed", String(!!state.voice));
   voiceBtn.onclick = () => {
     state.voice = !state.voice; syncVoiceBtn(); save();
     if (!state.voice) try { speechSynthesis.cancel(); } catch (e) {}
@@ -398,7 +528,7 @@ textarea:disabled { opacity: 0.5; }
   function speak(text) {
     if (!canSpeak || !state.voice) return;
     try {
-      const plain = splitFix(text).rest.replace(/```[\s\S]*?```/g, " 코드 블록 생략. ").replace(/[*`#>]/g, "");
+      const plain = splitFix(text).rest.replace(/```[\s\S]*?```/g, " 코드 블록 생략. ").replace(/[*`#>|]/g, "");
       const u = new SpeechSynthesisUtterance(plain);
       u.lang = "ko-KR"; u.rate = 1.05; u.pitch = 0.9;
       u.onstart = () => setState("speaking", "음성 출력 중");
@@ -407,7 +537,6 @@ textarea:disabled { opacity: 0.5; }
     } catch (e) {}
   }
 
-  // ---------- Claude ----------
   function rules() {
     const d = new Date();
     const now = `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${DAYS[d.getDay()]}요일 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -420,21 +549,21 @@ textarea:disabled { opacity: 0.5; }
       "- 영국식 집사처럼 침착하고 정중하며, 가끔 건조하고 절제된 위트를 섞습니다. 과장하거나 들뜨지 않습니다.",
       "- 기본은 한국어로 답하고, 사용자가 다른 언어로 말하면 그 언어로 답합니다.",
       "- 결론부터 짧게 말합니다. 필요할 때만 목록이나 코드 블록(```)을 씁니다.",
-      "- 인터넷 검색, 실시간 정보, 기기·집 제어는 할 수 없습니다. 그런 요청을 받으면 지어내지 말고 정중히 한계를 밝힌 뒤 할 수 있는 대안을 제시합니다.",
+      "- 인터넷 검색, 실시간 정보, 기기·집 제어는 할 수 없습니다. 그런 요청을 받으면 지어내지 말고 정중히 한계를 밝힌 뒤 할 수 있는 대안을 제시합니다. Claude Code 작업은 이 앱의 '세션' 탭에서 직접 맡길 수 있다고 안내합니다.",
       "- 확실하지 않은 것은 확실하지 않다고 말합니다.",
       `- 현재 사용자의 시각: ${now}`,
       "이 지시는 다시 언급하지 말고, 아래 대화에 자비스로서 이어서 답하세요.",
     ].join("\n");
   }
 
-  const ERRORS = {
+  const SAMPLE_ERRORS = {
     not_granted: "Claude 사용이 허용되지 않았습니다. 페이지를 새로고침하면 다시 허용할 수 있습니다.",
     rate_limited: "요청이 몰리고 있습니다, 여니. 잠시 후 다시 말씀해 주세요.",
     prompt_too_large: "대화가 너무 길어졌습니다. '새 대화'를 눌러 다시 시작해 주세요.",
     refused: "이 요청에는 응답할 수 없습니다.",
     session_expired: "로그인 세션이 만료되었습니다. 다시 로그인한 뒤 새로고침해 주세요.",
   };
-  const errCopy = (code) => ERRORS[code] || "연결이 불안정합니다. 잠시 후 다시 시도해 주세요.";
+  const sampleErr = (code) => SAMPLE_ERRORS[code] || "연결이 불안정합니다. 잠시 후 다시 시도해 주세요.";
 
   let sample = null, busy = false, ctl = null;
 
@@ -448,11 +577,11 @@ textarea:disabled { opacity: 0.5; }
     state.turns.push({ role: "user", content: text, t: now });
     save();
     addMsg("user", text, now);
-    box.value = ""; autosize();
+    box.value = ""; autosize(box);
 
     const reply = addMsg("assistant", "", Date.now());
     reply.body.innerHTML = '<span class="thinking">분석 중…</span>';
-    scrollDown();
+    scrollDown(log);
 
     busy = true; ctl = new AbortController();
     sendBtn.textContent = "중지"; sendBtn.classList.add("stop");
@@ -467,7 +596,7 @@ textarea:disabled { opacity: 0.5; }
         onText: ({ text }) => {
           if (firstText) { firstText = false; setState("speaking", "응답 중"); }
           reply.body.innerHTML = renderReply(text);
-          scrollDown();
+          scrollDown(log);
         },
       });
       reply.body.innerHTML = renderReply(answer);
@@ -490,28 +619,26 @@ textarea:disabled { opacity: 0.5; }
       }
       if (!e || e.code !== "cancelled") {
         const n = document.createElement("div"); n.className = "err";
-        n.textContent = errCopy(e && e.code);
+        n.textContent = sampleErr(e && e.code);
         reply.el.append(n);
       }
-      if (e && e.code === "not_granted") { goOffline("오프라인 · 권한 없음"); }
+      if (e && e.code === "not_granted") goOffline("오프라인 · 권한 없음");
     } finally {
       busy = false; ctl = null;
       sendBtn.textContent = "전송"; sendBtn.classList.remove("stop");
       if (app.dataset.state !== "offline" && !(canSpeak && state.voice && speechSynthesis.speaking)) setState("idle", "온라인 · 대기 중");
-      scrollDown();
-      if (!box.disabled) box.focus();
+      scrollDown(log);
     }
   }
-
   function goOffline(label) {
     sample = null;
     setState("offline", label);
     box.disabled = true; sendBtn.disabled = true;
+    $("aljal").hidden = true;
   }
 
-  // ---------- input ----------
-  function autosize() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 160) + "px"; }
-  box.addEventListener("input", autosize);
+  function autosize(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 180) + "px"; }
+  box.addEventListener("input", () => autosize(box));
   box.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
@@ -528,15 +655,354 @@ textarea:disabled { opacity: 0.5; }
     try { speechSynthesis.cancel(); } catch (e) {}
     state = fresh(); save(); renderAll();
     if (sample) setState("idle", "온라인 · 대기 중");
-    box.focus();
   };
+
+  // =====================================================================
+  // Claude Code sessions (via the viewer's "Claude Code Remote" connector)
+  // =====================================================================
+  let mcp = null, mcpChecked = false;
+  let sessions = [], unwatchList = null, listError = null;
+  let current = null, unwatchEvents = null, events = [], olderCursor = null, pending = [];
+
+  // Tool results arrive as JSON; tolerate a {ccr: {...}} wrapper or plain text JSON.
+  function unwrap(result) {
+    let p = result && result.payload;
+    if (typeof p === "string") {
+      const a = p.indexOf("{"), b = p.lastIndexOf("}");
+      try { p = a >= 0 ? JSON.parse(p.slice(a, b + 1)) : null; } catch (e) { p = null; }
+    }
+    if (p && p.ccr) p = p.ccr;
+    return p || {};
+  }
+
+  function mcpErrCopy(e) {
+    const code = e && e.code;
+    switch (code) {
+      case "needs_reauth": return { text: "Claude Code Remote 연결이 만료됐어요. claude.ai 설정 → 커넥터에서 다시 연결해 주세요.", deny: true };
+      case "server_not_connected":
+      case "selection_required":
+      case "server_not_found": return { text: "Claude Code Remote 커넥터를 찾을 수 없어요. claude.ai 설정 → 커넥터에서 추가하거나 선택해 주세요.", deny: true };
+      case "not_in_manifest": return { text: "이 페이지에서 세션 접근이 허용되지 않았어요. 페이지의 권한 메뉴에서 Claude Code Remote를 허용해 주세요.", deny: true, manage: true };
+      case "blocked_by_policy": return { text: "조직 정책으로 세션 접근이 막혀 있어요.", deny: true };
+      case "approval_required": return { text: "세션을 불러오려면 허용이 필요해요.", deny: true, approve: true };
+      case "not_granted":
+      case "capability_disabled":
+      case "capability_removed": return { text: "이 화면에서는 세션에 연결할 수 없어요. claude.ai에서 열어 주세요.", deny: true };
+      case "tool_error": return { text: "세션 서버가 요청을 거절했어요: " + ((e && e.message) || "") };
+      case "server_unavailable": return { text: "세션 서버에 잠시 연결이 안 돼요. 30초 안에 자동으로 다시 시도합니다." };
+      default: return { text: "세션을 불러오지 못했어요. 잠시 후 다시 시도해 주세요." };
+    }
+  }
+
+  // --- unread / pins ---
+  const updatedAt = (s) => Date.parse(s.updated_at) || 0;
+  const bucket = (s) => String(s.status_bucket || "").replace("SESSION_STATUS_BUCKET_", "");
+  function isUnread(s) {
+    if (!seen) return false;
+    const b = bucket(s);
+    if (b === "WORKING") return false;
+    const v = seen[s.id];
+    return v != null && updatedAt(s) > v;
+  }
+  function markSeen(s) {
+    if (!seen) seen = {};
+    seen[s.id] = updatedAt(s);
+    writeJSON(SEEN_KEY, seen);
+  }
+  function noteNewSessions() {
+    let changed = false;
+    if (!seen) { seen = {}; changed = true; }
+    for (const s of sessions) if (seen[s.id] == null) { seen[s.id] = updatedAt(s); changed = true; }
+    if (changed) writeJSON(SEEN_KEY, seen);
+  }
+  function statusPill(s) {
+    const b = bucket(s);
+    if (b === "WORKING") return ["working", "작업 중"];
+    if (b === "BLOCKED") return ["blocked", "확인 필요"];
+    if (b === "REVIEW_READY") return ["review", "검토 대기"];
+    if (b === "FAILED") return ["failed", "오류"];
+    return ["", "대기 중"];
+  }
+  function summaryOf(s) {
+    const pt = s.post_turn_summary || (s.external_metadata && s.external_metadata.post_turn_summary) || {};
+    return pt.recent_action || pt.status_detail || "";
+  }
+  function sorted() {
+    const rank = (s) => (isUnread(s) ? 0 : bucket(s) === "WORKING" || bucket(s) === "BLOCKED" ? 1 : 2);
+    const pinned = pins.map((id) => sessions.find((s) => s.id === id)).filter(Boolean);
+    const rest = sessions.filter((s) => !pins.includes(s.id)).sort((a, b) => rank(a) - rank(b) || updatedAt(b) - updatedAt(a));
+    return pinned.concat(rest);
+  }
+
+  function renderList() {
+    const list = $("list");
+    list.textContent = "";
+    const unread = sessions.filter(isUnread).length;
+    $("unreadBadge").hidden = !unread;
+    $("unreadBadge").textContent = unread;
+
+    if (listError && !sessions.length) {
+      list.append(errorBox(listError, () => loadListOnce()));
+      return;
+    }
+    if (!sessions.length) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = mcp ? "세션 목록을 불러오는 중…" : "이 화면에서는 세션에 연결할 수 없어요. claude.ai에서 열어 주세요.";
+      list.append(d);
+      return;
+    }
+    const head = document.createElement("div"); head.className = "list-head";
+    head.innerHTML = `<span>세션 ${sessions.length}개${unread ? ` · 새 답변 ${unread}개` : ""}</span><span>고정 → 새 답변 → 작업 중 → 최근 순</span>`;
+    list.append(head);
+    if (listError) {
+      const n = document.createElement("div"); n.className = "err"; n.textContent = listError.text; list.append(n);
+    }
+    for (const s of sorted()) {
+      const c = document.createElement("button");
+      c.type = "button";
+      c.className = "card" + (isUnread(s) ? " unread" : "");
+      const [cls, label] = statusPill(s);
+      const sum = summaryOf(s);
+      c.innerHTML =
+        `<div class="title">${esc(s.title || "(제목 없음)")}</div><div class="when">${esc(ago(updatedAt(s)))}</div>` +
+        `<div class="line">${pins.includes(s.id) ? '<span class="pill pin">고정</span>' : ""}` +
+        `${isUnread(s) ? '<span class="pill new">새 답변</span>' : ""}<span class="pill ${cls}">${label}</span></div>` +
+        (sum ? `<div class="summary">${esc(sum)}</div>` : "");
+      c.onclick = () => openSession(s);
+      list.append(c);
+    }
+  }
+
+  function errorBox(err, retry) {
+    const d = document.createElement("div"); d.className = "empty";
+    const t = document.createElement("div"); t.textContent = err.text; d.append(t);
+    if (err.approve) {
+      const b = document.createElement("button"); b.className = "btn"; b.type = "button"; b.textContent = "허용하고 불러오기";
+      b.onclick = retry; d.append(document.createElement("br"), b);
+    } else if (err.manage) {
+      const b = document.createElement("button"); b.className = "btn"; b.type = "button"; b.textContent = "권한 설정 열기";
+      b.onclick = async () => {
+        try { const p = await window.claude.use("permissions"); if (p) await p.manage(); } catch (e) {}
+      };
+      d.append(document.createElement("br"), b);
+    }
+    return d;
+  }
+
+  const LIST_INPUT = { limit: 40 };
+  function onListResult(result) {
+    const root = unwrap(result);
+    sessions = Array.isArray(root.data) ? root.data : [];
+    listError = null;
+    noteNewSessions();
+    if (current) {
+      const fresh = sessions.find((s) => s.id === current.id);
+      if (fresh) { current = fresh; if (view === "detail") { markSeen(fresh); renderDetailHead(); } }
+    }
+    renderList();
+  }
+  function startSessions() {
+    if (!mcp || unwatchList) { renderList(); return; }
+    unwatchList = mcp.watchTool(SERVER, "list_sessions", LIST_INPUT, (ev) => {
+      if (ev.type === "data") onListResult(ev.result);
+      else {
+        listError = mcpErrCopy(ev.error);
+        if (listError.deny) sessions = [];
+        renderList();
+      }
+    }, { refetchInterval: 30000 });
+  }
+  async function loadListOnce() {
+    if (!mcp) return;
+    try { onListResult(await mcp.callTool(SERVER, "list_sessions", LIST_INPUT, { cache: { refresh: true } })); }
+    catch (e) { listError = mcpErrCopy(e); renderList(); }
+  }
+
+  // --- one session ---
+  const dlog = $("dlog"), dbox = $("dmsg"), dsend = $("dsend"), aljalBtn = $("aljal"), dhint = $("dhint");
+
+  function parseEvents(root) {
+    const out = [];
+    for (const ev of root.data || []) {
+      const kind = ev.user ? "user" : ev.assistant ? "assistant" : null;
+      if (!kind) continue;
+      const rec = ev[kind] || {};
+      const msg = (rec.internal_anthropic_catchall && rec.internal_anthropic_catchall.message) || rec.message;
+      if (!msg) continue;
+      let text = "";
+      if (typeof msg.content === "string") text = msg.content;
+      else if (Array.isArray(msg.content)) text = msg.content.filter((b) => b && b.type === "text" && b.text).map((b) => b.text).join("\n");
+      text = text.trim();
+      if (!text) continue;
+      if (kind === "user" && text.startsWith("<")) continue; // system wake-ups, not something 여니 typed
+      out.push({ id: rec.uuid || ev.created_at + kind, role: kind, text, t: Date.parse(ev.created_at) || 0 });
+    }
+    return out;
+  }
+  function eventsInput(extra) { return Object.assign({ session_id: current.id, kinds: ["user", "assistant"], limit: 100 }, extra || {}); }
+
+  function renderDetailHead() {
+    $("dtitle").textContent = current.title || "(제목 없음)";
+    const [cls, label] = statusPill(current);
+    const p = $("dstatus"); p.className = "pill " + cls; p.textContent = label;
+    const pinned = pins.includes(current.id);
+    $("pinBtn").setAttribute("aria-pressed", String(pinned));
+    $("pinBtn").textContent = pinned ? "고정됨" : "고정";
+  }
+  function renderEvents(err) {
+    const atBottom = dlog.scrollHeight - dlog.scrollTop - dlog.clientHeight < 60;
+    dlog.textContent = "";
+    if (olderCursor) {
+      const b = document.createElement("button"); b.className = "btn older"; b.type = "button"; b.textContent = "이전 대화 더 보기";
+      b.onclick = loadOlder; dlog.append(b);
+    }
+    const userTexts = new Set(events.filter((e) => e.role === "user").map((e) => e.text));
+    pending = pending.filter((p) => !userTexts.has(p.text));
+    for (const e of events) {
+      const m = e.role === "user"
+        ? makeMsg("user", "여니", e.t, null, e.text)
+        : makeMsg("claude", "<b>CLAUDE</b>", e.t, md(e.text));
+      dlog.append(m.el);
+    }
+    for (const p of pending) {
+      const m = makeMsg("user pending", "여니 · 전송됨, 답변 대기", null, null, p.text);
+      dlog.append(m.el);
+    }
+    if (!events.length && !pending.length && !err) {
+      const d = document.createElement("div"); d.className = "empty"; d.textContent = "대화를 불러오는 중…"; dlog.append(d);
+    }
+    if (err) dlog.append(err.deny ? errorBox(err, refreshEvents) : Object.assign(document.createElement("div"), { className: "err", textContent: err.text }));
+    if (atBottom || !events.length) scrollDown(dlog);
+  }
+  function onEventsResult(result) {
+    const root = unwrap(result);
+    const fresh = parseEvents(root);
+    // keep anything loaded through "이전 대화 더 보기" that is older than this page
+    const ids = new Set(fresh.map((e) => e.id));
+    const firstT = fresh.length ? fresh[0].t : Infinity;
+    const older = events.filter((e) => !ids.has(e.id) && e.t < firstT);
+    events = older.concat(fresh);
+    if (!older.length) olderCursor = root.has_more ? root.first_id : null;
+    renderEvents();
+  }
+  function openSession(s) {
+    current = s; events = []; pending = []; olderCursor = null;
+    markSeen(s);
+    renderDetailHead();
+    show("detail");
+    dhint.textContent = "";
+    renderEvents();
+    stopEvents();
+    unwatchEvents = mcp.watchTool(SERVER, "list_events", eventsInput(), (ev) => {
+      if (ev.type === "data") onEventsResult(ev.result);
+      else { const err = mcpErrCopy(ev.error); if (err.deny) events = []; renderEvents(err); }
+    }, { refetchInterval: 30000 });
+  }
+  function stopEvents() { if (unwatchEvents) { unwatchEvents(); unwatchEvents = null; } }
+  async function refreshEvents() {
+    if (!current || !mcp) return;
+    $("drefresh").disabled = true;
+    try {
+      onEventsResult(await mcp.callTool(SERVER, "list_events", eventsInput(), { cache: { refresh: true } }));
+      loadListOnce();
+    } catch (e) { renderEvents(mcpErrCopy(e)); }
+    finally { $("drefresh").disabled = false; }
+  }
+  async function loadOlder() {
+    if (!olderCursor) return;
+    const before = olderCursor; olderCursor = null;
+    try {
+      const root = unwrap(await mcp.callTool(SERVER, "list_events", eventsInput({ before_id: before })));
+      const h = dlog.scrollHeight;
+      events = parseEvents(root).concat(events);
+      olderCursor = root.has_more ? root.first_id : null;
+      renderEvents();
+      dlog.scrollTop = dlog.scrollHeight - h;
+    } catch (e) { olderCursor = before; renderEvents(mcpErrCopy(e)); }
+  }
+  $("back").onclick = () => { current = null; show("sessions"); };
+  $("drefresh").onclick = refreshEvents;
+  $("pinBtn").onclick = () => {
+    if (!current) return;
+    pins = pins.includes(current.id) ? pins.filter((id) => id !== current.id) : [current.id].concat(pins);
+    writeJSON(PIN_KEY, pins);
+    renderDetailHead(); renderList();
+  };
+
+  // --- send to session ---
+  let dsending = false;
+  async function sendToSession() {
+    const text = dbox.value.trim();
+    if (!text || dsending || !current || !mcp) return;
+    dsending = true; dsend.disabled = true; dsend.textContent = "보내는 중";
+    dhint.textContent = "";
+    try {
+      await mcp.callTool(SERVER, "send_message", { session_id: current.id, message: text });
+      pending.push({ text, t: Date.now() });
+      dbox.value = ""; autosize(dbox); undoText = null;
+      renderEvents(); scrollDown(dlog);
+      dhint.textContent = "보냈어요. 답변은 30초마다 자동으로 확인해요.";
+      try { await mcp.invalidate(SERVER, "list_sessions"); } catch (e) {}
+    } catch (e) {
+      const code = e && e.code;
+      if (code === "server_unavailable" || code === "upstream_error") {
+        dhint.textContent = "전송됐는지 확인하지 못했어요. 새로고침으로 확인한 뒤, 안 보이면 다시 보내세요.";
+      } else {
+        dhint.textContent = mcpErrCopy(e).text;
+      }
+    } finally {
+      dsending = false; dsend.disabled = false; dsend.textContent = "보내기";
+    }
+  }
+  $("dform").addEventListener("submit", (e) => { e.preventDefault(); sendToSession(); });
+  dbox.addEventListener("input", () => autosize(dbox));
+
+  // --- 알잘딱: tidy a rough spoken draft into a clear request ---
+  let undoText = null, aljalBusy = false;
+  async function aljal() {
+    const draft = dbox.value.trim();
+    if (!draft || !sample || aljalBusy) return;
+    aljalBusy = true; aljalBtn.disabled = true; aljalBtn.textContent = "다듬는 중…";
+    dhint.textContent = "";
+    const prompt = [
+      "아래 '원문'은 사용자가 음성 인식으로 말한 내용이야. 이걸 Claude Code(코딩 에이전트)에게 보낼 요청문으로 다듬어줘.",
+      "규칙:",
+      "- 음성 인식 오류를 바로잡아: 소리가 비슷한 다른 단어, 띄어쓰기, 빠진 조사, 한글로 받아 적힌 영어 기술 용어(예: 깃허브→GitHub, 리액트→React, 커밋→commit은 그대로 둬도 됨).",
+      "- '음..', '어', 같은 말 반복, 말하다 고친 부분 같은 군더더기는 지워.",
+      "- 사용자의 의도와 요구사항은 하나도 빼거나 새로 더하지 마. 모호한 부분은 추측해서 채우지 말고 원문 표현을 살려.",
+      "- 요구가 여러 개면 번호 목록으로 정리하고, 하나면 한두 문장으로 써.",
+      "- 원문의 말투(반말/존댓말)를 따르되 간결하게.",
+      "- 다듬은 요청문만 출력해. 설명이나 머리말은 붙이지 마.",
+      current ? `\n이 요청을 받을 세션의 주제: ${current.title || ""}` : "",
+      "\n원문:\n" + draft,
+    ].join("\n");
+    try {
+      const { text } = await sample(prompt, { modelTier: "quick", cache: false });
+      const clean = text.trim();
+      if (clean) {
+        undoText = dbox.value;
+        dbox.value = clean; autosize(dbox);
+        dhint.innerHTML = '<span>다듬었어요. 확인하고 보내세요.</span>';
+        const u = document.createElement("button"); u.type = "button"; u.className = "btn"; u.textContent = "되돌리기";
+        u.onclick = () => { if (undoText != null) { dbox.value = undoText; autosize(dbox); undoText = null; dhint.textContent = ""; } };
+        dhint.append(u);
+      }
+    } catch (e) {
+      if (e && e.code === "not_granted") { aljalBtn.hidden = true; dhint.textContent = "Claude 사용이 허용되지 않아 알잘딱을 쓸 수 없어요."; }
+      else dhint.textContent = sampleErr(e && e.code);
+    } finally {
+      aljalBusy = false; aljalBtn.disabled = false; aljalBtn.textContent = "✦ 알잘딱";
+    }
+  }
+  aljalBtn.onclick = aljal;
 
   // ---------- boot ----------
   syncVoiceBtn();
   renderAll();
-  box.disabled = true; sendBtn.disabled = true;
-  (async () => {
-    try { sample = window.claude ? await window.claude.use("sample") : null; } catch (e) { sample = null; }
+  box.disabled = true; sendBtn.disabled = true; aljalBtn.hidden = true;
+  const use = (name) => { try { return window.claude ? window.claude.use(name) : Promise.resolve(null); } catch (e) { return Promise.resolve(null); } };
+  use("sample").then((s) => {
+    sample = s;
     if (!sample) {
       goOffline("오프라인");
       const n = document.createElement("div"); n.className = "msg jarvis";
@@ -544,9 +1010,13 @@ textarea:disabled { opacity: 0.5; }
       log.append(n);
       return;
     }
-    box.disabled = false; sendBtn.disabled = false;
+    box.disabled = false; sendBtn.disabled = false; aljalBtn.hidden = false;
     setState("idle", "온라인 · 대기 중");
-    box.focus();
-  })();
+  }, () => goOffline("오프라인"));
+  use("mcp").then((m) => {
+    mcp = m; mcpChecked = true;
+    if (!mcp) { $("dsend").disabled = true; }
+    startSessions(); // also keeps the 새 답변 badge on the 세션 tab current
+  }, () => { mcpChecked = true; renderList(); });
 })();
 </script>
