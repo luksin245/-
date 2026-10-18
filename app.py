@@ -98,7 +98,15 @@ def edit_rows(rows, prefix, body=()):
     for i, r in enumerate(rows):
         key = f"{prefix}-{i}"
         head = f"[{r['구분']}] " + (r["조항"] or r["개정안"].split("\n", 1)[0][:30])
+        # 아직 현행과 같은 개정 행(법 개정 탭·직접 추가에서 온 행)은 문서에 들어가지 않으므로 눈에 띄게 표시한다
+        current_text = st.session_state.get(f"{key}-new", r["개정안"])
+        unchanged = r["구분"] == "개정" and current_text.strip() == r["현행"].strip()
+        if unchanged:
+            head = f"✏️ {head} — 아직 고친 내용 없음 (문서에 안 들어감)"
         with st.expander(head):
+            if unchanged:
+                where = f" ({r['출처']})" if r.get("출처") else ""
+                st.warning(f"이 조항은 직접 고치려고 추가한 조항입니다{where}. 개정(안) 칸을 고쳐야 신구대조표와 개정 취업규칙에 들어갑니다.")
             include = st.checkbox("신구대조표에 포함", value=True, key=f"{key}-on")
             left, right = st.columns(2)
             with left:
@@ -193,7 +201,7 @@ def law_change_tab(articles, text):
                 a = next(x for x in body if x["조항"] == label)
                 if st.checkbox(f"{label}({a['제목']}) 신구대조표에 추가", key=f"law-{i}-{label}"):
                     row = picked.setdefault(label, {"구분": "개정", "조항": label, "현행": a["내용"],
-                                                    "개정안": a["내용"], "사유": ""})
+                                                    "개정안": a["내용"], "사유": "", "출처": "③ 법 개정 반영 탭에서 추가"})
                     row["사유"] = "\n".join(filter(None, [row["사유"], reason(c)]))
                 st.text(a["내용"])
 
@@ -224,7 +232,8 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
         for label in extra:
             if label not in drafted:
                 a = next(a for a in body if a["조항"] == label)
-                rows.append({"구분": "개정", "조항": label, "현행": a["내용"], "개정안": a["내용"], "사유": ""})
+                rows.append({"구분": "개정", "조항": label, "현행": a["내용"], "개정안": a["내용"], "사유": "",
+                             "출처": "직접 개정할 조항 추가"})
         prefix = f"draft-{file_name}"
     else:
         st.caption("개정한 취업규칙 PDF를 올리면 현행과 조항별로 비교합니다. 조항은 제목으로 먼저 맞추므로 번호만 바뀐 조항은 제외됩니다. "
