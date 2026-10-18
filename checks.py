@@ -466,10 +466,28 @@ def check_severance(articles):
     return out
 
 
+# 가산임금 규정이 없을 때 넣는 문구 (사용자가 정한 통일 문구)
+PREMIUM_FULL = ("연장·야간근로에 대해서는 통상임금의 100분의 50을 가산하여 지급한다. "
+                "단, 휴일근로 중 8시간을 초과한 근로에 대하여는 통상임금의 100분의 100을 가산하여 지급한다.")
+PREMIUM_HOLIDAY = "휴일근로 중 8시간을 초과한 근로에 대하여는 통상임금의 100분의 100을 가산하여 지급한다."
+
+
 def check_overtime_premium(articles):
     basis = [(LABOR, "제56조")]
     out = []
     hits = _sentences_with(articles, ["가산"])
+    # 적용제외자(감시·단속적 근로자 등)에 대한 조항의 가산율은 일반 사원의 가산 규정으로 보지 않는다
+    premium = [(a, s, n) for a, s, n in hits
+               if any(k in n for k in ("연장", "야간", "휴일", "시간외")) and _ratios(n)
+               and "적용제외" not in norm(a["제목"])]
+    target = find_articles(articles, ["연장근로", "연장·야간", "연장야간", "시간외근로"])
+    if not premium:
+        # 가산율을 정한 문장이 하나도 없으면 통일 문구를 연장근로 조항에 넣는다
+        if target:
+            out.append(_finding("연장·야간·휴일근로 가산임금 규정 없음", REVIEW, basis,
+                                "연장·야간·휴일근로의 가산임금(통상임금의 100분의 50, 8시간 넘는 휴일근로는 100분의 100) 규정이 없습니다.",
+                                target[0], "", {"add": PREMIUM_FULL}))
+        return out
     for a, s, n in hits:
         if not any(k in n for k in ("연장", "야간", "휴일", "시간외")):
             continue
@@ -478,14 +496,12 @@ def check_overtime_premium(articles):
             out.append(_finding("연장·야간·휴일근로 가산임금", VIOLATION, basis,
                                 "연장·야간·휴일근로에는 통상임금의 100분의 50 이상을 가산해야 합니다.", a, s,
                                 {"pattern": RATIO, "repl": "100분의 50"}))
-    holiday = _article_sentences(articles, ["휴일근로"])
     full = [norm(a["내용"]) for a in articles]
     has_100 = any("휴일" in t and any(k in t for k in ("100분의100", "100%", "100퍼센트")) for t in full)
-    if holiday and not has_100:
-        a, s, _ = holiday[0]
+    if target and not has_100:
         out.append(_finding("8시간 초과 휴일근로 가산", REVIEW, basis,
-                            "휴일근로 중 8시간을 넘는 부분은 통상임금의 100분의 100 이상을 가산해야 합니다. 이 규정이 있는지 확인하세요.", a, s,
-                            {"add": "휴일근로 중 8시간을 초과한 근로에 대하여는 통상임금의 100분의 100 이상을 가산하여 지급한다."}))
+                            "휴일근로 중 8시간을 넘는 부분은 통상임금의 100분의 100 이상을 가산해야 합니다. 이 규정이 있는지 확인하세요.",
+                            target[0], "", {"add": PREMIUM_HOLIDAY}))
     return out
 
 
@@ -566,6 +582,45 @@ def check_leave_combination(articles):
     return out
 
 
+DATE = re.compile(r"(\d{4})\s*[.년-]\s*(\d{1,2})\s*[.월-]\s*(\d{1,2})")
+CIRCLED_CHARS = "".join(chr(c) for c in range(0x2460, 0x2474))
+
+
+def _paragraphs(text):
+    """조항을 항(①②…) 단위로 나눈다. 항 아래 호(1. 2.)는 그 항에 포함된다."""
+    paras, cur = [], []
+    for line in text.split("\n"):
+        if line.strip()[:1] in CIRCLED_CHARS and cur:
+            paras.append("\n".join(cur))
+            cur = []
+        cur.append(line)
+    if cur:
+        paras.append("\n".join(cur))
+    return paras
+
+
+def check_expired(articles):
+    """효력이 끝난 한시 규정과 이미 지난 '[시행일: …]' 표시"""
+    out = []
+    today = __import__("datetime").date.today().strftime("%Y%m%d")
+    for a in articles:
+        for para in _paragraphs(a["내용"]):
+            n = norm(para)
+            if para.strip()[:1] in CIRCLED_CHARS and re.search(r"30(명|인)미만", n) and "8시간" in n and "연장" in n:
+                first = para.strip().split("\n", 1)[0]
+                out.append(_finding("30명 미만 사업장 추가 연장근로(만료)", VIOLATION, [(LABOR, "제53조")],
+                                    "상시 30명 미만 사업장에서 근로자대표와 서면 합의로 1주 8시간을 더 연장할 수 있게 한 규정(근로기준법 제53조 제3항)은 "
+                                    "2022. 12. 31.까지만 적용된 한시 규정이라 지금은 효력이 없습니다. 이 항을 지우세요.", a, first,
+                                    {"drop_para": first[:30]}))
+        for m in re.finditer(r"\[\s*시행일[^\]]*\]", a["내용"]):
+            dates = [f"{y}{int(mo):02d}{int(d):02d}" for y, mo, d in DATE.findall(m.group(0))]
+            if dates and max(dates) <= today:
+                out.append(_finding("지난 시행일 표시", REVIEW, [],
+                                    "이미 지난 날짜의 '[시행일: …]' 표시입니다. 경과 규정이 끝났으므로 지워도 됩니다.", a, m.group(0),
+                                    {"pattern": re.escape(m.group(0)), "repl": ""}))
+    return out
+
+
 def check_missing_numbers(articles):
     """PDF에서 숫자가 빠진 것으로 보이는 곳 ('기간이 개월 미만')"""
     out = []
@@ -638,6 +693,7 @@ CHECKS = [
     check_retirement_age,
     check_severance,
     check_sexual_harassment,
+    check_expired,
     check_missing_numbers,
 ]
 

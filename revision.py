@@ -24,7 +24,7 @@ LAW_SHORT = {LABOR: "근로기준법", EQUAL: "남녀고용평등법", RETIRE: "
 TEMPLATES = {
     "목적": "제○조(목적) 이 규칙은 회사 직원의 채용·복무 및 근로조건 등에 관한 사항을 정함을 목적으로 한다.",
     "적용범위": "제○조(적용범위) ① 이 규칙은 회사에 근무하는 직원에게 적용한다.\n② 직원의 복무 및 근로조건에 관하여 법령, 단체협약 또는 이 규칙 외의 다른 회사 규정에 별도로 정한 경우를 제외하고는 이 규칙이 정하는 바에 따른다.",
-    "연장·야간·휴일근로": "제○조(연장·야간 및 휴일근로) ① 연장근로는 1주간 12시간을 한도로 직원의 동의하에 실시할 수 있다. 다만, 18세 미만 직원은 1일 1시간, 1주 5시간을 한도로 하고, 산후 1년이 지나지 아니한 여성 직원은 1일 2시간, 1주 6시간, 1년 150시간을 한도로 하며, 임신 중인 여성 직원은 연장근로를 시키지 아니한다.\n② 연장근로와 야간근로(오후 10시부터 다음 날 오전 6시 사이의 근로)에 대하여는 통상임금의 100분의 50 이상을 가산하여 지급한다.\n③ 휴일근로에 대하여는 8시간 이내는 통상임금의 100분의 50, 8시간을 초과한 근로는 통상임금의 100분의 100을 가산하여 지급한다.",
+    "연장·야간·휴일근로": "제○조(연장·야간 및 휴일근로) ① 연장근로는 1주간 12시간을 한도로 직원의 동의하에 실시할 수 있다. 다만, 18세 미만 직원은 1일 1시간, 1주 5시간을 한도로 하고, 산후 1년이 지나지 아니한 여성 직원은 1일 2시간, 1주 6시간, 1년 150시간을 한도로 하며, 임신 중인 여성 직원은 연장근로를 시키지 아니한다.\n② 연장·야간근로에 대해서는 통상임금의 100분의 50을 가산하여 지급한다. 단, 휴일근로 중 8시간을 초과한 근로에 대하여는 통상임금의 100분의 100을 가산하여 지급한다.",
     "유급휴일(주휴일)": "제○조(유급휴일) ① 1주 동안 소정근로일을 개근한 직원에게는 매주 ○요일을 유급주휴일로 준다.\n② 근로자의 날(5월 1일)은 유급휴일로 한다.",
     "공휴일 유급휴일": "제○조(공휴일) 관공서의 공휴일에 관한 규정에 따른 공휴일(일요일 제외) 및 대체공휴일은 유급휴일로 한다. 다만, 근로자대표와 서면 합의한 경우 특정한 근로일로 대체할 수 있다.",
     "연차유급휴가": "제○조(연차유급휴가) ① 1년간 80퍼센트 이상 출근한 직원에게는 15일의 유급휴가를 준다.\n② 계속하여 근로한 기간이 1년 미만인 직원 또는 1년간 80퍼센트 미만 출근한 직원에게 1개월 개근 시 1일의 유급휴가를 준다.\n③ 3년 이상 근속한 직원에 대하여는 최초 1년을 초과하는 계속 근로연수 매 2년에 대하여 1일을 가산한 유급휴가를 주며, 가산휴가를 포함한 총 휴가일수는 25일을 한도로 한다.",
@@ -136,6 +136,28 @@ def _append_item(text, sentence):
     return f"{text}\n{sentence}"
 
 
+def _drop_paragraph(text, start):
+    """start로 시작하는 항(① …과 그 아래 호)을 지우고, 뒤의 항 번호(③→②)를 다시 매긴다."""
+    lines = text.split("\n")
+    out, skipping = [], False
+    for line in lines:
+        head = line.strip()
+        if head.startswith(start):
+            skipping = True
+            continue
+        if skipping and head[:1] in CIRCLED:
+            skipping = False
+        if not skipping:
+            out.append(line)
+    n = 0
+    for i, line in enumerate(out):
+        head = line.lstrip()
+        if head[:1] in CIRCLED:
+            out[i] = line[:len(line) - len(head)] + CIRCLED[n] + head[1:]
+            n += 1
+    return "\n".join(out)
+
+
 def _required_basis(no):
     return f"근로기준법 제93조 제{no}호" if no[0].isdigit() else f"표준취업규칙 {no}"
 
@@ -150,7 +172,7 @@ def draft_rows(articles, required, findings):
         fix = f.get("fix")
         if not fix or f["상태"] == OK:
             continue
-        reason = f"{f['주제']}({_basis_text(f['근거'])})"
+        reason = f"{f['주제']}({_basis_text(f['근거'])})" if f["근거"] else f["주제"]
         if "new" in fix:
             near = [a["조항"] for a in articles if not a["부칙"] and "괴롭힘" in a["제목"] + a["내용"]]
             new_rows.append(_row(NEW, "", "", fix["new"], reason, near[-1] if near else None, f["근거"]))
@@ -159,7 +181,12 @@ def draft_rows(articles, required, findings):
         if not article:
             continue
         entry = changed.setdefault(article["조항"], [article["내용"], [], {}, []])
-        if "pattern" in fix or "subs" in fix:
+        if "drop_para" in fix:
+            dropped = _drop_paragraph(entry[0], fix["drop_para"])
+            if dropped == entry[0]:
+                continue
+            entry[0] = dropped
+        elif "pattern" in fix or "subs" in fix:
             # 같은 문장에 고칠 곳이 여럿이면 앞에서 고친 문장에 이어서 고친다
             current = entry[2].get(f["발췌"], f["발췌"])
             fixed = current
