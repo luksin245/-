@@ -118,8 +118,9 @@ def _sub_once(pattern, repl, text):
     return text[:m.start()] + repl + rest
 
 
-def _row(kind, label, current, revised, reason):
-    return {"구분": kind, "조항": label, "현행": current, "개정안": revised, "사유": reason}
+def _row(kind, label, current, revised, reason, position=None):
+    """position: 신설 조항을 넣을 자리(이 조항 다음). None이면 본칙 맨 끝."""
+    return {"구분": kind, "조항": label, "현행": current, "개정안": revised, "사유": reason, "위치": position}
 
 
 def _basis_text(basis):
@@ -150,7 +151,8 @@ def draft_rows(articles, required, findings):
             continue
         reason = f"{f['주제']}({_basis_text(f['근거'])})"
         if "new" in fix:
-            new_rows.append(_row(NEW, "", "", fix["new"], reason))
+            near = [a["조항"] for a in articles if not a["부칙"] and "괴롭힘" in a["제목"] + a["내용"]]
+            new_rows.append(_row(NEW, "", "", fix["new"], reason, near[-1] if near else None))
             continue
         article = by_label.get(f["조항"])
         if not article:
@@ -174,11 +176,21 @@ def draft_rows(articles, required, findings):
             for label, (text, reasons, _) in changed.items()]
     rows.sort(key=lambda r: articles.index(by_label[r["조항"]]))
 
+    order = {a["조항"]: i for i, a in enumerate(articles)}
+    chapter_of = {a["조항"]: a["장"] for a in articles}
     for item in required:
+        # 같은 항목의 다른 세부가 가장 많이 들어 있는 조항의 장을 찾고, 그 장 안의 관련 조항 중 마지막 다음에 넣는다
+        # (예: 가족돌봄휴가 → 모성보호 장의 마지막 관련 조항 뒤, 승급 → 임금 장의 관련 조항 뒤)
+        found = [label for d in item["세부"] for label in d["조항"] if label in order]
+        position = None
+        if found:
+            best = max(set(found), key=lambda x: (found.count(x), order[x]))
+            same = [x for x in found if chapter_of[x] == chapter_of[best]]
+            position = max(same, key=order.get)
         for d in item["세부"]:
             if not d["조항"] and d["세부"] in TEMPLATES:
                 new_rows.append(_row(NEW, "", "", TEMPLATES[d["세부"]],
-                                     f"필수 기재사항 누락: {d['세부']}({_required_basis(item['번호'])})"))
+                                     f"필수 기재사항 누락: {d['세부']}({_required_basis(item['번호'])})", position))
     return rows + new_rows
 
 
@@ -444,9 +456,128 @@ def _article_no(label):
     return int(m.group(1)) if m else 0
 
 
-def to_rules_docx(articles, rows, title="취업규칙 (개정안)", font=FONTS[0], mark=True, size=10.5):
-    """현행 취업규칙 전체에 개정·삭제·신설 내용을 반영한 초안.
-    신설 조항은 본칙 끝에 이어 번호를 매기고, 끝에 새 부칙을 붙인다."""
+LABEL = re.compile(r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?")
+# 이런 말 바로 뒤의 '제n조'는 다른 법령을 가리키므로 번호를 바꾸지 않는다
+# ('이 규칙'·'본 규칙'·'취업규칙'은 이 규칙 자신이므로 제외)
+OTHER_LAW = re.compile(r"(법|령|」|』|협약|규약|한다\)|(?<!취업)(?<![이본])(?<![이본]\s)(?:규칙|규정))\s*$")
+
+
+def _set_label(text, label):
+    """조항 첫머리의 '제○조'·'제12조의2'를 label로 바꾼다. 첫머리에 조 번호가 없으면 붙인다."""
+    text = text.strip()
+    if re.match(r"^제\s*[\d○]+\s*조(?:\s*의\s*\d+)?", text):
+        return re.sub(r"^제\s*[\d○]+\s*조(?:\s*의\s*\d+)?", label, text, count=1)
+    return f"{label} {text}"
+
+
+def _remap_refs(text, mapping):
+    """본문 속 '제n조'(이 규칙 안의 인용)를 새 번호로 바꾼다. 첫머리 조 번호와 다른 법령 인용은 그대로 둔다."""
+    head = re.match(r"^\s*제\s*\d+\s*조(?:\s*의\s*\d+)?", text)
+    start = head.end() if head else 0
+
+    def repl(m):
+        pos = start + m.start()  # m은 text[start:] 기준 위치
+        if OTHER_LAW.search(text[max(0, pos - 15):pos]):
+            return m.group(0)
+        key = f"제{m.group(1)}조" + (f"의{m.group(2)}" if m.group(2) else "")
+        return mapping.get(key, m.group(0))
+
+    return text[:start] + LABEL.sub(repl, text[start:])
+
+
+def plan_rules(articles, rows, renumber=False):
+    """개정 후 본칙의 조항 순서와 번호.
+
+    반환: [{"종류": "현행"|"신설", "조항": 새 번호, "이전": 현행 번호, "행": 신구대조표 행, "내용": 개정 후 문구,
+            "장": 장 제목}], 번호 대응표 {현행 번호: 새 번호}
+    renumber=False: 기존 번호는 그대로 두고, 신설 조항은 가지번호(제40조의2)로 끼워 넣는다.
+    renumber=True: 신설·삭제를 반영해 제1조부터 번호를 다시 매기고, 본문 속 조 인용도 고친다.
+    """
+    body = [a for a in articles if not a["부칙"]]
+    labels = [a["조항"] for a in body]
+    changed = {r["조항"]: r for r in rows if r["조항"] and r["구분"] in (CHANGE, DELETE)}
+    after, tail = {}, []
+    for r in rows:
+        if r["구분"] == NEW and not r["조항"]:
+            if r.get("위치") in labels:
+                after.setdefault(r["위치"], []).append(r)
+            else:
+                tail.append(r)
+
+    seq = []
+    for a in body:
+        seq.append({"종류": "현행", "이전": a["조항"], "행": changed.get(a["조항"]), "원문": a["내용"], "장": a["장"]})
+        for r in after.get(a["조항"], []):
+            seq.append({"종류": "신설", "이전": None, "행": r, "위치": a["조항"], "장": a["장"]})
+    for r in tail:
+        seq.append({"종류": "신설", "이전": None, "행": r, "위치": None, "장": None})
+
+    mapping = {}
+    if renumber:
+        seq = [it for it in seq if not (it["행"] and it["행"]["구분"] == DELETE)]
+        for n, it in enumerate(seq, 1):
+            it["조항"] = f"제{n}조"
+            if it["이전"]:
+                mapping[it["이전"]] = it["조항"]
+    else:
+        used = set(labels)
+        tail_no = max((_article_no(x) for x in labels), default=0) + 1
+        for it in seq:
+            if it["이전"]:
+                it["조항"] = it["이전"]
+            elif it["위치"]:
+                base, branch = _article_no(it["위치"]), 2
+                while f"제{base}조의{branch}" in used:
+                    branch += 1
+                it["조항"] = f"제{base}조의{branch}"
+                used.add(it["조항"])
+            else:
+                it["조항"] = f"제{tail_no}조"
+                tail_no += 1
+
+    # 신설 조항의 제목 괄호를 현행 규칙의 표기(예: 제1조【목적】)에 맞춘다
+    lunar = sum("【" in a["내용"].split("\n", 1)[0] for a in body) > len(body) / 2
+    for it in seq:
+        row = it["행"]
+        if it["종류"] == "신설":
+            text = row["개정안"]
+            if lunar:
+                text = re.sub(r"^(제\s*[\d○]+\s*조(?:\s*의\s*\d+)?)\s*\(([^)]*)\)", r"\1【\2】", text.strip(), count=1)
+        elif row and row["구분"] == DELETE:
+            text = f"{it['이전']} 삭제"
+        elif row:
+            text = row["개정안"]
+        else:
+            text = it["원문"]
+        text = _set_label(text, it["조항"])
+        it["내용"] = _remap_refs(text, mapping) if mapping else text
+    return seq, mapping
+
+
+def numbered_rows(seq, rows):
+    """신구대조표 행에 새 조 번호를 반영해 조항 순서대로 돌려준다 (비교 모드 행은 그대로 뒤에 붙인다)."""
+    out, seen = [], set()
+    for it in seq:
+        row = it["행"]
+        if row is None:
+            continue
+        seen.add(id(row))
+        revised = "" if row["구분"] == DELETE else it["내용"]
+        out.append({**row, "조항": it["조항"] if row["구분"] == NEW else row["조항"], "개정안": revised})
+    return out + [r for r in rows if id(r) not in seen]
+
+
+def _korean_date(text):
+    """'2026. 12. 1.', '2026-12-01', '2026년 12월 1일' → ('2026년 12월 1일', '2026. 12. 1.'). 못 읽으면 빈칸 표시."""
+    m = re.search(r"(\d{4})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})", text or "")
+    if not m:
+        return "○○○○년 ○월 ○일", "○○○○. ○. ○."
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    return f"{y}년 {mo}월 {d}일", f"{y}. {mo}. {d}."
+
+
+def to_rules_docx(articles, seq, title="취업규칙 (개정안)", font=FONTS[0], mark=True, size=10.5, effective=""):
+    """개정 후 취업규칙 전체. mark=True면 검토용(개정 파란색·신설 초록색), False면 최종본."""
     doc = Document()
     section = doc.sections[0]
     section.page_width, section.page_height = Cm(21.0), Cm(29.7)
@@ -459,42 +590,28 @@ def to_rules_docx(articles, rows, title="취업규칙 (개정안)", font=FONTS[0
     _font(p.add_run(title), font, 18, bold=True)
     if mark:
         note = doc.add_paragraph()
-        _font(note.add_run("※ 파란색은 개정한 조항, 초록색은 신설한 조항입니다. 확인한 뒤 글자색을 검정으로 바꿔 사용하세요."),
-              font, size - 1.5)
-
-    changed = {r["조항"]: r for r in rows if r["조항"] and r["구분"] in (CHANGE, DELETE)}
-    body = [a for a in articles if not a["부칙"]]
-    addenda = [a for a in articles if a["부칙"]]
+        _font(note.add_run("※ 파란색은 개정한 조항, 초록색은 신설한 조항입니다. (검토용)"), font, size - 1.5)
 
     chapter = None
-    for a in body:
-        if a["장"] and a["장"] != chapter:
-            chapter = a["장"]
+    for it in seq:
+        if it["장"] and it["장"] != chapter:
+            chapter = it["장"]
             _heading_line(doc, chapter, font, size + 1)
-        row = changed.get(a["조항"])
-        if row is None:
-            _write_article(doc, a["내용"], font, size)
-        elif row["구분"] == DELETE:
-            _write_article(doc, f"{a['조항']} 삭제", font, size, CHANGED_COLOR if mark else None)
-        else:
-            _write_article(doc, row["개정안"], font, size, CHANGED_COLOR if mark else None)
+        color = None
+        if mark and it["종류"] == "신설":
+            color = NEW_COLOR
+        elif mark and it["행"]:
+            color = CHANGED_COLOR
+        _write_article(doc, it["내용"], font, size, color)
 
-    next_no = max((_article_no(a["조항"]) for a in body), default=0) + 1
-    new_rows = [r for r in rows if r["구분"] == NEW]
-    if new_rows:
-        if mark:
-            _heading_line(doc, "신설 조항 (알맞은 장으로 옮기고 조 번호를 정리하세요)", font, size + 1)
-        for r in new_rows:
-            text = re.sub(r"^제\s*○\s*조", f"제{next_no}조", r["개정안"].strip())
-            _write_article(doc, text, font, size, NEW_COLOR if mark else None)
-            next_no += 1
-
+    addenda = [a for a in articles if a["부칙"]]
     if addenda:
         _heading_line(doc, "부 칙", font, size + 1)
         for a in addenda:
             _write_article(doc, a["내용"], font, size)
-    _heading_line(doc, "부 칙 (○○○○. ○. ○.)", font, size + 1)
-    _write_article(doc, "이 규칙은 ○○○○년 ○월 ○일부터 시행한다.", font, size, NEW_COLOR if mark else None)
+    long_date, short_date = _korean_date(effective)
+    _heading_line(doc, f"부 칙 ({short_date})", font, size + 1)
+    _write_article(doc, f"이 규칙은 {long_date}부터 시행한다.", font, size, NEW_COLOR if mark else None)
 
     buf = io.BytesIO()
     doc.save(buf)

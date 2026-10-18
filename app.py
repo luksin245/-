@@ -15,7 +15,8 @@ from checks import (MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_requ
 from law_changes import (detect_base_date, draft_new_article, fmt, is_relevant, law_changes,
                          load_history, related_articles, short_name)
 from law_db import LawDB
-from revision import DELETE, FONTS, NEW, compare_rows, to_rules_docx, diff_html, diff_segments, draft_rows, to_docx
+from revision import (DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, numbered_rows,
+                      plan_rules, to_docx, to_rules_docx)
 from rule_parser import extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
@@ -85,9 +86,15 @@ def to_excel(articles, required, findings, revision_rows=()):
     return buf.getvalue()
 
 
-def edit_rows(rows, prefix):
-    """신구대조표 행을 화면에서 고칠 수 있게 보여 주고, 포함하기로 한 행을 돌려준다."""
+END = "(본칙 맨 끝)"
+
+
+def edit_rows(rows, prefix, body=()):
+    """신구대조표 행을 화면에서 고칠 수 있게 보여 주고, 포함하기로 한 행을 돌려준다.
+    body가 있으면 신설 조항마다 넣을 위치(어느 조 다음)를 고를 수 있다."""
     final = []
+    places = [END] + [a["조항"] for a in body]
+    titles = {a["조항"]: a["제목"] for a in body}
     for i, r in enumerate(rows):
         key = f"{prefix}-{i}"
         head = f"[{r['구분']}] " + (r["조항"] or r["개정안"].split("\n", 1)[0][:30])
@@ -105,12 +112,18 @@ def edit_rows(rows, prefix):
                                        disabled=r["구분"] == DELETE)
             reason = st.text_area("비고(개정 사유)", r["사유"], key=f"{key}-why",
                                   height=max(68, 28 * (r["사유"].count("\n") + 1)))
+            position = r.get("위치")
+            if r["구분"] == NEW and not r["조항"] and body:
+                default = places.index(position) if position in places else 0
+                choice = st.selectbox("넣을 위치", places, index=default, key=f"{key}-pos",
+                                      format_func=lambda x: x if x == END else f"{x}({titles.get(x, '')}) 다음")
+                position = None if choice == END else choice
             if r["구분"] not in (NEW, DELETE) and revised != r["현행"]:
                 _, after = diff_segments(r["현행"], revised)
                 st.markdown("**바뀐 부분 미리보기**")
                 st.markdown(diff_html(after), unsafe_allow_html=True)
         if include and (r["구분"] in (NEW, DELETE) or revised.strip() != r["현행"].strip()):
-            final.append({**r, "개정안": revised, "사유": reason})
+            final.append({**r, "개정안": revised, "사유": reason, "위치": position})
     return final
 
 
@@ -242,15 +255,66 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
         st.info("바뀐 조항이 없습니다.")
         return []
 
-    final = edit_rows(rows, prefix)
+    drafting = mode.startswith("점검")
+    body = [a for a in articles if not a["부칙"]]
+    final = edit_rows(rows, prefix, body if drafting else ())
     st.divider()
     base_name = file_name.rsplit(".", 1)[0]
     docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    font = st.selectbox("글꼴 (두 문서 공통)", FONTS,
-                        help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
     st.write(f"반영할 조항: {len(final)}개")
     if not final:
         return final
+
+    if drafting:
+        numbering = st.radio("신설 조항 번호 매기기", ["가지번호로 끼워 넣기 (예: 제40조의2) — 기존 조 번호 유지", "제1조부터 전체 번호 다시 매기기"],
+                             help="가지번호 방식은 다른 조항의 번호가 바뀌지 않아 개정이 간단합니다(권장).")
+        renumber = numbering.startswith("제1조")
+        seq, mapping = plan_rules(articles, final, renumber)
+        table_rows = numbered_rows(seq, final)
+        new_items = [it for it in seq if it["종류"] == "신설"]
+        if new_items:
+            lines = []
+            for it in new_items:
+                title = (it["내용"].split("\n", 1)[0])[:40]
+                where = f"{mapping.get(it['위치'], it['위치'])} 다음" if it.get("위치") else "본칙 맨 끝"
+                lines.append(f"- **{it['조항']}** ← {where} · {title}")
+            st.markdown("**신설 조항이 들어갈 자리**\n" + "\n".join(lines))
+        if renumber and mapping:
+            moved = sum(1 for old, new_label in mapping.items() if old != new_label)
+            st.caption(f"번호가 바뀌는 기존 조항 {moved}개. 본문 속 '제○조' 인용도 새 번호로 바꿨지만(다른 법령 인용은 제외), "
+                       "최종본에서 한 번 더 확인하세요. 번호만 바뀐 조항은 신구대조표에 넣지 않습니다.")
+    else:
+        table_rows = final
+
+    font = st.selectbox("글꼴 (모든 문서 공통)", FONTS,
+                        help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("📄 신구대조표")
+        st.caption("현행 / 개정 안 / 비고 3칸 표 (A4 가로)")
+        title = st.text_input("신구대조표 제목", "취업규칙 신구대조표")
+        with_reason = st.checkbox("비고에 개정 사유 넣기", value=True)
+        highlight = st.checkbox("바뀐 부분 밑줄 표시", value=False)
+        st.download_button("📥 신구대조표 다운로드 (.docx)",
+                           data=to_docx(table_rows, title, font=font, highlight=highlight, with_reason=with_reason),
+                           file_name=f"{base_name}_신구대조표.docx", mime=docx_mime, use_container_width=True)
+    with right:
+        st.subheader("📘 개정 취업규칙")
+        if drafting:
+            st.caption("현행 취업규칙 전체에 위 내용을 반영한 문서 (A4 세로). 신설 조항은 고른 자리에 들어갑니다.")
+            rules_title = st.text_input("문서 제목", "취업규칙")
+            effective = st.text_input("개정 시행일 (새 부칙에 들어감)", placeholder="예: 2026. 12. 1.  (비우면 ○○○○년 ○월 ○일)")
+            st.download_button("📥 검토용 초안 (개정 파란색·신설 초록색)",
+                               data=to_rules_docx(articles, seq, f"{rules_title} (개정안)", font=font, mark=True,
+                                                  effective=effective),
+                               file_name=f"{base_name}_개정안_검토용.docx", mime=docx_mime, use_container_width=True)
+            st.download_button("📥 최종본 (색 표시 없음)",
+                               data=to_rules_docx(articles, seq, rules_title, font=font, mark=False, effective=effective),
+                               file_name=f"{base_name}_개정_최종본.docx", mime=docx_mime, use_container_width=True,
+                               type="primary")
+        else:
+            st.caption("개정본 PDF와 비교하는 경우에는 올린 개정본이 곧 최종본이므로 따로 만들지 않습니다.")
+    return table_rows
 
     left, right = st.columns(2)
     with left:
