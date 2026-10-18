@@ -17,7 +17,7 @@ from law_changes import (detect_base_date, fmt, is_relevant, law_changes,
 from law_db import LawDB
 from revision import (DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, numbered_rows,
                       plan_rules, strip_internal_refs, to_docx, to_rules_docx)
-from rule_parser import extract_text, split_articles
+from rule_parser import detect_company, extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
 
@@ -232,7 +232,7 @@ def law_change_tab(articles, text):
     return list(picked.values())
 
 
-def revision_tab(articles, required, findings, file_name, law_rows=()):
+def revision_tab(articles, required, findings, file_name, law_rows=(), rules_text=""):
     mode = st.radio("만드는 방법", ["점검 결과로 개정안 초안 만들기", "개정본 PDF와 비교하기"], horizontal=True)
 
     if mode.startswith("점검"):
@@ -313,10 +313,16 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
         st.subheader("📄 신구대조표")
         st.caption("현행 / 개정 안 / 비고 3칸 표 (A4 가로)")
         title = st.text_input("신구대조표 제목", "취업규칙 신구대조표")
+        c1, c2 = st.columns(2)
+        today = date.today()
+        written = c1.text_input("작성일", f"{today.year}. {today.month}. {today.day}.",
+                                help="비우면 문서에 넣지 않습니다.")
+        company = c2.text_input("회사명", detect_company(rules_text), help="PDF 앞부분에서 찾은 이름입니다. 비우면 넣지 않습니다.")
         with_reason = st.checkbox("비고에 개정 사유 넣기", value=True)
-        highlight = st.checkbox("바뀐 부분 밑줄 표시", value=False)
+        highlight = st.checkbox("바뀐 부분 밑줄 표시", value=True)
         st.download_button("📥 신구대조표 다운로드 (.docx)",
-                           data=to_docx(table_rows, title, font=font, highlight=highlight, with_reason=with_reason),
+                           data=to_docx(table_rows, title, font=font, highlight=highlight, with_reason=with_reason,
+                                        company=company, written=written),
                            file_name=f"{base_name}_신구대조표.docx", mime=docx_mime, use_container_width=True)
     with right:
         st.subheader("📘 개정 취업규칙")
@@ -424,7 +430,7 @@ with tab_law:
     law_rows = law_change_tab(articles, text)
 
 with tab_rev:
-    final_rows = revision_tab(articles, required, findings, uploaded.name, law_rows)
+    final_rows = revision_tab(articles, required, findings, uploaded.name, law_rows, text)
 
 with tab_report:
     st.write("점검 결과를 엑셀 파일로 내려받습니다. (필수기재사항, 위반점검, 조항목록, 신구대조표 시트)")

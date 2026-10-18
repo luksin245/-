@@ -103,3 +103,12 @@ def sentences(text):
     """조항 본문을 문장 단위로 나눈다."""
     parts = re.split(r"(?<=[.。])\s+|\n", text)
     return [p.strip() for p in parts if p.strip()]
+
+
+def detect_company(text):
+    """PDF 앞부분에서 회사명을 찾는다: '(주)케미원스', '㈜○○', '주식회사 ○○', '○○ 주식회사'."""
+    for line in text.splitlines()[:15]:
+        m = re.search(r"(?:\(주\)|㈜|주식회사)\s*[가-힣A-Za-z0-9&·]+|[가-힣A-Za-z0-9&·]+\s*(?:\(주\)|㈜|주식회사)", line)
+        if m:
+            return m.group(0).strip()
+    return ""

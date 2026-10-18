@@ -364,11 +364,9 @@ def _write_cell(cell, segments, has_heading, font, size, highlight):
             if not piece:
                 continue
             run = paragraph.add_run(piece)
-            mark = highlight and changed and bool(piece.strip())
-            _font(run, font, size, bold=(has_heading and p_index == 0) or mark)
-            if mark:
-                run.font.underline = True
-                run.font.color.rgb = RGBColor(0xC0, 0x39, 0x2B)
+            _font(run, font, size, bold=has_heading and p_index == 0)
+            if highlight and changed and piece.strip():
+                run.font.underline = True  # 바뀐 부분은 밑줄만 긋는다
     paragraph.paragraph_format.space_after = Pt(10)  # 조항 사이 여백
 
 
@@ -399,7 +397,9 @@ def _title_box(doc, title, font, page_width_cm):
     _font(p.add_run(title), font, 17, bold=True)
 
 
-def to_docx(rows, title="취업규칙 신구대조표", font=FONTS[0], highlight=False, with_reason=True, size=9.5):
+def to_docx(rows, title="취업규칙 신구대조표", font=FONTS[0], highlight=True, with_reason=True, size=9.5,
+            company="", written=""):
+    """신구대조표. company·written이 있으면 제목 아래에 회사명과 작성일을 적는다."""
     doc = Document()
     section = doc.sections[0]
     section.orientation = WD_ORIENT.LANDSCAPE
@@ -410,6 +410,15 @@ def to_docx(rows, title="취업규칙 신구대조표", font=FONTS[0], highlight
     usable = 29.7 - 2 * margin
 
     _title_box(doc, title, font, usable)
+    info = [f"작성일 : {written}" if written.strip() else "", f"회사명 : {company}" if company.strip() else ""]
+    info = [x for x in info if x]
+    for i, line in enumerate(info):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        _tight(p)
+        if i == len(info) - 1:
+            p.paragraph_format.space_after = Pt(6)
+        _font(p.add_run(line), font, size + 0.5)
 
     table = doc.add_table(rows=1, cols=3)
     table.style = "Table Grid"
