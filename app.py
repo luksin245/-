@@ -324,12 +324,15 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
             st.caption("현행 취업규칙 전체에 위 내용을 반영한 문서 (A4 세로). 신설 조항은 고른 자리에 들어갑니다.")
             rules_title = st.text_input("문서 제목", "취업규칙")
             effective = st.text_input("개정 시행일 (새 부칙에 들어감)", placeholder="예: 2026. 12. 1.  (비우면 ○○○○년 ○월 ○일)")
+            with_toc = st.checkbox("맨 앞에 목차 넣기", value=True,
+                                   help="Word에서 열 때 '필드를 업데이트할까요?'에 '예'를 누르면 쪽 번호가 붙습니다.")
             st.download_button("📥 검토용 초안 (개정 파란색·신설 초록색)",
                                data=to_rules_docx(articles, seq, f"{rules_title} (개정안)", font=font, mark=True,
-                                                  effective=effective),
+                                                  effective=effective, toc=with_toc),
                                file_name=f"{base_name}_개정안_검토용.docx", mime=docx_mime, use_container_width=True)
             st.download_button("📥 최종본 (색 표시 없음)",
-                               data=to_rules_docx(articles, seq, rules_title, font=font, mark=False, effective=effective),
+                               data=to_rules_docx(articles, seq, rules_title, font=font, mark=False, effective=effective,
+                                                  toc=with_toc),
                                file_name=f"{base_name}_개정_최종본.docx", mime=docx_mime, use_container_width=True,
                                type="primary")
         else:

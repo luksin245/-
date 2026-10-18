@@ -61,7 +61,7 @@ TEMPLATES = {
     "휴게시간": "제○조(휴게) 회사는 근로시간이 4시간인 경우에는 30분 이상, 8시간인 경우에는 1시간 이상의 휴게시간을 근로시간 도중에 준다.",
     "결정·계산·지급 방법": "제○조(임금의 계산 및 지급방법) 임금은 월 단위로 계산하여 통화로 직접 직원에게 그 전액을 지급한다. 다만, 직원의 동의를 받아 직원 명의의 예금계좌로 지급할 수 있다.",
     "산정기간·지급시기": "제○조(임금의 산정기간 및 지급일) 임금은 매월 1일부터 말일까지를 산정기간으로 하여 다음 달 ○일에 지급한다. 지급일이 휴일인 경우에는 그 전날 지급한다.",
-    "승급": "제○조(승급) 승급은 매년 1회 실시하며, 그 기준과 방법은 회사가 별도로 정한다.",
+    "승급": "제○조(승급) 승급은 필요시 실시하며, 그 기준과 방법은 회사가 별도로 정한다.",
     "퇴직급여": "제○조(퇴직급여) 회사는 계속근로기간이 1년 이상인 직원이 퇴직하는 경우 근로자퇴직급여 보장법에 따라 계속근로기간 1년에 대하여 30일분 이상의 평균임금을 퇴직금으로 지급하거나 퇴직연금제도를 운영한다.",
     "최저임금": "제○조(최저임금) 회사는 최저임금법에 따른 최저임금액 이상의 임금을 지급한다.",
     "출산전후휴가": "제○조(출산전후휴가) ① 회사는 임신 중인 여성 직원에게 출산 전과 출산 후를 통하여 90일(미숙아를 출산한 경우에는 100일, 한 번에 둘 이상 자녀를 임신한 경우에는 120일)의 출산전후휴가를 준다. 이 경우 출산 후에 45일(한 번에 둘 이상 자녀를 임신한 경우에는 60일) 이상이 되도록 한다.\n② 휴가 기간 중 최초 60일(한 번에 둘 이상 자녀를 임신한 경우에는 75일)은 유급으로 한다.",
@@ -459,25 +459,87 @@ CHANGED_COLOR = RGBColor(0x1F, 0x4E, 0xB4)  # 개정 조항: 파란색
 NEW_COLOR = RGBColor(0x2E, 0x7D, 0x32)      # 신설 조항: 초록색
 
 
-def _heading_line(doc, text, font, size):
-    p = doc.add_paragraph()
+def _heading_line(doc, text, font, size, toc=False):
+    p = doc.add_paragraph(style="Heading 1" if toc else None)
     p.paragraph_format.space_before = Pt(10)
     p.paragraph_format.space_after = Pt(4)
     _font(p.add_run(text), font, size, bold=True)
 
 
-def _write_article(doc, text, font, size, color=None):
+def _write_article(doc, text, font, size, color=None, toc=False):
     laid, has_heading = _layout(text)
     for i, line in enumerate(laid.split("\n")):
-        p = doc.add_paragraph()
+        heading = has_heading and i == 0
+        p = doc.add_paragraph(style="Heading 2" if toc and heading else None)
         _tight(p)
         p.paragraph_format.line_spacing = 1.3
         _indent(p, line)
         run = p.add_run(line)
-        _font(run, font, size, bold=has_heading and i == 0)
+        _font(run, font, size, bold=heading)
         if color is not None:
             run.font.color.rgb = color
     p.paragraph_format.space_after = Pt(8)
+
+
+def _plain_heading_styles(doc, font, size):
+    """목차용 제목 스타일(장=제목 1, 조=제목 2)을 본문과 같은 모양(검은색, 같은 글꼴)으로 만든다."""
+    for name, pt in (("Heading 1", size + 1), ("Heading 2", size)):
+        style = doc.styles[name]
+        style.font.name = font
+        style.font.size = Pt(pt)
+        style.font.bold = True
+        style.font.italic = False
+        style.font.color.rgb = RGBColor(0, 0, 0)
+        style.element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), font)
+        style.paragraph_format.keep_with_next = True
+
+
+def _field_char(run, kind):
+    el = OxmlElement("w:fldChar")
+    el.set(qn("w:fldCharType"), kind)
+    run._r.append(el)
+
+
+def _table_of_contents(doc, entries, font, size):
+    """목차. Word가 문서를 열 때 필드를 업데이트하면 쪽 번호가 붙은 목차로 바뀌고,
+    업데이트하지 않아도 장·조 목록은 그대로 보인다."""
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(10)
+    _font(p.add_run("목 차"), font, size + 3, bold=True)
+    if not entries:
+        return
+    paras = []
+    for level, text in entries:
+        q = doc.add_paragraph()
+        _tight(q)
+        q.paragraph_format.line_spacing = 1.2
+        if level == 2:
+            q.paragraph_format.left_indent = Cm(0.6)
+        else:
+            q.paragraph_format.space_before = Pt(4)
+        paras.append((q, level, text))
+    first, last = paras[0][0], paras[-1][0]
+    begin = first.add_run()
+    _field_char(begin, "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = 'TOC \\o "1-2" \\h \\z \\u'
+    begin._r.append(instr)
+    _field_char(begin, "separate")
+    for q, level, text in paras:
+        _font(q.add_run(text), font, size - 0.5, bold=level == 1)
+    _field_char(last.add_run(), "end")
+    # 문서를 열 때 Word가 필드(목차 쪽 번호) 업데이트를 묻도록 한다
+    update = OxmlElement("w:updateFields")
+    update.set(qn("w:val"), "true")
+    doc.settings.element.append(update)
+    doc.add_page_break()
+
+
+def _toc_line(text):
+    laid, has_heading = _layout(text)
+    return laid.split("\n", 1)[0] if has_heading else None
 
 
 def _article_no(label):
@@ -629,9 +691,11 @@ def _korean_date(text):
     return f"{y}년 {mo}월 {d}일", f"{y}. {mo}. {d}."
 
 
-def to_rules_docx(articles, seq, title="취업규칙 (개정안)", font=FONTS[0], mark=True, size=10.5, effective=""):
-    """개정 후 취업규칙 전체. mark=True면 검토용(개정 파란색·신설 초록색), False면 최종본."""
+def to_rules_docx(articles, seq, title="취업규칙 (개정안)", font=FONTS[0], mark=True, size=10.5, effective="",
+                  toc=True):
+    """개정 후 취업규칙 전체. mark=True면 검토용(개정 파란색·신설 초록색), False면 최종본. toc=True면 앞에 목차."""
     doc = Document()
+    _plain_heading_styles(doc, font, size)
     section = doc.sections[0]
     section.page_width, section.page_height = Cm(21.0), Cm(29.7)
     for side, cm in (("left_margin", 2.5), ("right_margin", 2.5), ("top_margin", 2.0), ("bottom_margin", 2.0)):
@@ -645,25 +709,42 @@ def to_rules_docx(articles, seq, title="취업규칙 (개정안)", font=FONTS[0]
         note = doc.add_paragraph()
         _font(note.add_run("※ 파란색은 개정한 조항, 초록색은 신설한 조항입니다. (검토용)"), font, size - 1.5)
 
+    addenda = [a for a in articles if a["부칙"]]
+    long_date, short_date = _korean_date(effective)
+    new_addendum = f"부 칙 ({short_date})"
+
+    if toc:
+        entries, chapter = [], None
+        for it in seq:
+            if it["장"] and it["장"] != chapter:
+                chapter = it["장"]
+                entries.append((1, chapter))
+            line = _toc_line(it["내용"])
+            if line:
+                entries.append((2, line))
+        if addenda:
+            entries.append((1, "부 칙"))
+            entries += [(2, x) for x in (_toc_line(a["내용"]) for a in addenda) if x]
+        entries.append((1, new_addendum))
+        _table_of_contents(doc, entries, font, size)
+
     chapter = None
     for it in seq:
         if it["장"] and it["장"] != chapter:
             chapter = it["장"]
-            _heading_line(doc, chapter, font, size + 1)
+            _heading_line(doc, chapter, font, size + 1, toc)
         color = None
         if mark and it["종류"] == "신설":
             color = NEW_COLOR
         elif mark and it["행"]:
             color = CHANGED_COLOR
-        _write_article(doc, it["내용"], font, size, color)
+        _write_article(doc, it["내용"], font, size, color, toc)
 
-    addenda = [a for a in articles if a["부칙"]]
     if addenda:
-        _heading_line(doc, "부 칙", font, size + 1)
+        _heading_line(doc, "부 칙", font, size + 1, toc)
         for a in addenda:
-            _write_article(doc, a["내용"], font, size)
-    long_date, short_date = _korean_date(effective)
-    _heading_line(doc, f"부 칙 ({short_date})", font, size + 1)
+            _write_article(doc, a["내용"], font, size, toc=toc)
+    _heading_line(doc, new_addendum, font, size + 1, toc)
     _write_article(doc, f"이 규칙은 {long_date}부터 시행한다.", font, size, NEW_COLOR if mark else None)
 
     buf = io.BytesIO()
