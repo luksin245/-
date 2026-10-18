@@ -319,7 +319,8 @@ def _layout(text):
 def _font(run, name, size, bold=False):
     run.font.name = name
     run.font.size = Pt(size)
-    run.font.bold = bold
+    # 굵게가 아닐 때는 '굵게 해제' 표시를 쓰지 않는다(일부 프로그램이 이를 굵게로 잘못 읽는다)
+    run.font.bold = True if bold else None
     rfonts = run._element.get_or_add_rPr().get_or_add_rFonts()
     for attr in ("w:eastAsia", "w:ascii", "w:hAnsi"):
         rfonts.set(qn(attr), name)
