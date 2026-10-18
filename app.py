@@ -16,7 +16,7 @@ from law_changes import (detect_base_date, fmt, is_relevant, law_changes,
                          load_history, related_articles, short_name)
 from law_db import LawDB
 from revision import (DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, numbered_rows,
-                      plan_rules, to_docx, to_rules_docx)
+                      plan_rules, strip_internal_refs, to_docx, to_rules_docx)
 from rule_parser import extract_text, split_articles
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
@@ -218,7 +218,8 @@ def law_change_tab(articles, text):
                 a = next(x for x in body if x["조항"] == label)
                 if st.checkbox(f"{label}({a['제목']}) 신구대조표에 추가", key=f"law-{i}-{label}"):
                     row = picked.setdefault(label, {"구분": "개정", "조항": label, "현행": a["내용"],
-                                                    "개정안": a["내용"], "사유": "", "출처": "③ 법 개정 반영 탭에서 추가",
+                                                    "개정안": strip_internal_refs(a["내용"]), "사유": "",
+                                                    "출처": "③ 법 개정 반영 탭에서 추가",
                                                     "법개정": []})
                     row["사유"] = "\n".join(filter(None, [row["사유"], reason(c)]))
                     row["법개정"].append(c)
@@ -236,7 +237,8 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
 
     if mode.startswith("점검"):
         st.caption("위반 의심·확인 필요 항목과 빠진 필수 기재사항으로 개정안 초안을 만들었습니다. "
-                   "사업장 실정에 맞게 고친 뒤 내려받으세요. 신설 조항의 '제○조'와 '○○' 부분은 직접 채워 주세요.")
+                   "사업장 실정에 맞게 고친 뒤 내려받으세요. 신설 조항의 '제○조'와 '○○' 부분은 직접 채워 주세요. "
+                   "고치는 조항에서는 '제66조 제1항에 따라'처럼 다른 조항을 가리키는 표현을 지웠습니다(다른 법령 인용은 유지).")
         rows = draft_rows(articles, required, findings)
         by_label = {r["조항"]: r for r in rows if r["조항"]}
         for r in law_rows:  # '법 개정 반영' 탭에서 고른 조항
@@ -252,7 +254,7 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
         for label in extra:
             if label not in drafted:
                 a = next(a for a in body if a["조항"] == label)
-                rows.append({"구분": "개정", "조항": label, "현행": a["내용"], "개정안": a["내용"], "사유": "",
+                rows.append({"구분": "개정", "조항": label, "현행": a["내용"], "개정안": strip_internal_refs(a["내용"]), "사유": "",
                              "출처": "직접 개정할 조항 추가"})
         prefix = f"draft-{file_name}"
     else:

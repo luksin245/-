@@ -174,7 +174,7 @@ def draft_rows(articles, required, findings):
         entry[1].append(reason)
         entry[3].extend(f["근거"])
 
-    rows = [_row(CHANGE, label, by_label[label]["내용"], text, "\n".join(reasons), basis=basis)
+    rows = [_row(CHANGE, label, by_label[label]["내용"], strip_internal_refs(text), "\n".join(reasons), basis=basis)
             for label, (text, reasons, _, basis) in changed.items()]
     rows.sort(key=lambda r: articles.index(by_label[r["조항"]]))
 
@@ -485,6 +485,30 @@ def _remap_refs(text, mapping):
         return mapping.get(key, m.group(0))
 
     return text[:start] + LABEL.sub(repl, text[start:])
+
+
+# 이 규칙의 다른 조항을 가리키는 표현: "제66조 제1항에 따라", "이 규칙 제67조에 따른", "제17조제4호에 의한"
+INTERNAL_REF = re.compile(
+    r"(?:(?:이|본)\s*규칙\s*)?"
+    r"제\s*\d+\s*조(?:\s*의\s*\d+)?(?:\s*제\s*\d+\s*항)?(?:\s*제\s*\d+\s*호)?"
+    r"(?:\s*(?:및|또는|,|ㆍ|·)\s*제\s*\d+\s*(?:조|항|호)(?:\s*의\s*\d+)?)*"
+    r"\s*(?:의\s*규정에\s*)?(?:에\s*따라|에\s*따른|에\s*의한|에\s*의하여|에서\s*정한|에서\s*정하는)\s*"
+)
+
+
+def strip_internal_refs(text):
+    """조문 안의 '제66조 제1항에 따라' 같은 다른 조항 인용을 지운다 (조 번호가 바뀌어도 어긋나지 않게).
+    첫머리 조 번호와 다른 법령 인용(「직업안정법」 제2조의2 제1호에 따른)은 그대로 둔다."""
+    head = re.match(r"^\s*제\s*[\d○]+\s*조(?:\s*의\s*\d+)?(?:\s*[(（【\[][^)）】\]]*[)）】\]])?", text)
+    start = head.end() if head else 0
+
+    def repl(m):
+        pos = start + m.start()
+        if OTHER_LAW.search(text[max(0, pos - 15):pos]):
+            return m.group(0)
+        return ""
+
+    return text[:start] + INTERNAL_REF.sub(repl, text[start:])
 
 
 def plan_rules(articles, rows, renumber=False):

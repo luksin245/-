@@ -402,7 +402,7 @@ def check_parental_leave(articles):
     hits = _sentences_with(articles, ["육아휴직"], exclude=("근로시간단축",))
     for a, s, n in hits:
         m = re.search(r"(\d)회", n)
-        if m and "나누어" in n and int(m.group(1)) < 3:
+        if m and ("나누어" in n or "분할" in n) and int(m.group(1)) < 3:
             out.append(_finding("육아휴직 분할 사용", VIOLATION, [(EQUAL, "제19조의4")],
                                 f"육아휴직은 3회까지 나누어 쓸 수 있습니다. 규칙에는 {m.group(1)}회로 되어 있습니다. (2025. 2. 23. 시행)", a, s,
                                 _swap(m.group(1), "회", "3회")))
@@ -524,18 +524,56 @@ def check_infertility(articles):
 
 
 def check_childcare_reduction(articles):
+    """육아기 근로시간 단축 (남녀고용평등법 제19조의2, 제19조의4 — 2025. 2. 23. 시행 기준)"""
     out = []
-    for a, s, n in _sentences_with(articles, ["육아기"]):
-        if "단축" not in n:
-            continue
+    basis = [(EQUAL, "제19조의2")]
+    for a, s, n in _article_sentences(articles, ["육아기근로시간단축"]):
+        # 대상 자녀: 직접 '8세·2학년'으로 쓴 경우와 '육아휴직을 신청할 수 있는 사원'으로 육아휴직 대상(8세)을 끌어온 경우
         if re.search(r"(?<!\d)8세", n) or "2학년" in n:
-            out.append(_finding("육아기 근로시간 단축 대상 자녀", VIOLATION, [(EQUAL, "제19조의2")],
+            out.append(_finding("육아기 근로시간 단축 대상 자녀", VIOLATION, basis,
                                 "육아기 근로시간 단축 대상 자녀가 만 12세 이하 또는 초등학교 6학년 이하로 넓어졌습니다. (2025. 2. 23. 시행)", a, s,
                                 {"subs": [(r"(?<!\d)8\s*세", "12세"), (r"2\s*학년", "6학년")]}))
-        if "3개월" in n and ("나누어" in n or "1회" in n):
+        elif "육아휴직을신청할수있는" in n and "신청하는경우" in n and "12세" not in n:
+            out.append(_finding("육아기 근로시간 단축 대상 자녀", VIOLATION, basis,
+                                "대상을 '육아휴직을 신청할 수 있는 사원'(만 8세·초2 이하 자녀)으로 정하고 있습니다. 육아기 근로시간 단축 대상은 "
+                                "만 12세 이하 또는 초등학교 6학년 이하 자녀로 육아휴직보다 넓고, '육아휴직 대신' 쓰는 제도도 아닙니다. (2025. 2. 23. 시행)", a, s,
+                                {"pattern": r"제\s*\d+\s*조\s*제\s*1\s*항에\s*따라\s*육아휴직을\s*신청할\s*수\s*있는\s*(?:남녀\s*)?(사원|직원|근로자)이\s*(?:육아휴직\s*대신\s*)?",
+                                 "repl": "사원이 만 12세 이하 또는 초등학교 6학년 이하의 자녀를 양육하기 위하여 "}))
+        # 기간: 미사용 육아휴직 기간의 두 배 가산
+        if "사용하지아니한기간" in n and "가산" in n and not re.search(r"두배|2배", n):
+            out.append(_finding("육아기 근로시간 단축 기간", VIOLATION, basis,
+                                "육아휴직 기간 중 사용하지 않은 기간이 있으면 그 기간의 두 배를 가산한 기간까지 육아기 근로시간 단축을 쓸 수 있습니다. (2025. 2. 23. 시행)", a, s,
+                                {"pattern": r"그\s*기간을\s*가산한", "repl": "그 기간의 두 배를 가산한"}))
+        # 나누어 쓸 때 1회 최소 기간: 1개월
+        if "나누어" in n and "1회의기간" in n and "1개월" not in n:
             out.append(_finding("육아기 근로시간 단축 최소 사용기간", VIOLATION, [(EQUAL, "제19조의4")],
-                                "육아기 근로시간 단축을 나누어 쓸 때 1회 최소 기간이 3개월에서 1개월로 줄었습니다. (2025. 2. 23. 시행)", a, s,
-                                _swap(3, "개월", "1개월")))
+                                "육아기 근로시간 단축을 나누어 쓸 때 1회 최소 기간은 1개월입니다(종전 3개월). (2025. 2. 23. 시행)", a, s,
+                                {"subs": [(r"1회의\s*기간은\s*\d*\s*개월", "1회의 기간은 1개월"),
+                                          (r"만료로\s*\d*\s*개월", "만료로 1개월")]}))
+    return out
+
+
+def check_leave_combination(articles):
+    """육아휴직과 육아기 근로시간 단축을 합쳐 1년으로 묶는 옛 규정 (2019. 10. 1. 개정 전 방식)"""
+    out = []
+    for a, s, n in _article_sentences(articles, ["육아기근로시간단축"]):
+        if re.search(r"총기간은1년을넘을수없", n):
+            out.append(_finding("육아휴직·육아기 근로시간 단축 합산 제한", VIOLATION, [(EQUAL, "제19조의4")],
+                                "육아휴직과 육아기 근로시간 단축을 합쳐 1년으로 제한하는 것은 옛 규정입니다. 지금은 육아휴직(1년, 일정 경우 1년 6개월)과 "
+                                "육아기 근로시간 단축(1년 + 미사용 육아휴직 기간의 두 배)을 각각 쓸 수 있습니다.", a, s,
+                                {"pattern": r"\s*이\s*경우\s*어느\s*방법을\s*사용하든지\s*그\s*총\s*기간은\s*1\s*년을\s*넘을\s*수\s*없다\.?",
+                                 "repl": ""}))
+    return out
+
+
+def check_missing_numbers(articles):
+    """PDF에서 숫자가 빠진 것으로 보이는 곳 ('기간이 개월 미만')"""
+    out = []
+    for a in articles:
+        for s in sentences(a["내용"]):
+            if re.search(r"(?:^|[^\d\s])\s+(개월|시간)\s*(이상|미만|이내|초과|까지)", s):
+                out.append(_finding("숫자 누락 의심", REVIEW, [],
+                                    "숫자 없이 '개월'·'시간'만 남은 곳이 있습니다. PDF에서 숫자가 빠졌거나 원본에 빈칸이 있는지 원본과 대조해 주세요.", a, s))
     return out
 
 
@@ -592,6 +630,7 @@ CHECKS = [
     check_spouse_leave,
     check_parental_leave,
     check_childcare_reduction,
+    check_leave_combination,
     check_pregnancy,
     check_infertility,
     check_family_care,
@@ -599,6 +638,7 @@ CHECKS = [
     check_retirement_age,
     check_severance,
     check_sexual_harassment,
+    check_missing_numbers,
 ]
 
 
