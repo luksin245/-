@@ -152,10 +152,3 @@ def related_articles(change, rules_articles):
 
 def is_relevant(change):
     return bool(change["제목"]) and not IRRELEVANT.search(change["제목"])
-
-
-def draft_new_article(change):
-    """관련 조항이 없을 때 신설 조항 초안: 법 조문을 회사 규정 말투로 바꾼 정도."""
-    body = re.sub(r"^제\s*\d+\s*조(?:의\s*\d+)?(?:\([^)]*\))?\s*", "", change["현재"])
-    body = re.sub(r"사업주|사용자", "회사", body)
-    return f"제○조({change['제목']}) {body}"

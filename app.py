@@ -12,7 +12,7 @@ import streamlit as st
 
 from checks import (MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required, check_violations,
                     skipped_items)
-from law_changes import (detect_base_date, draft_new_article, fmt, is_relevant, law_changes,
+from law_changes import (detect_base_date, fmt, is_relevant, law_changes,
                          load_history, related_articles, short_name)
 from law_db import LawDB
 from revision import (DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, numbered_rows,
@@ -153,7 +153,6 @@ def law_change_tab(articles, text):
     for c in changes:
         c["관련"] = related_articles(c, body)
     related = [c for c in changes if c["관련"]]
-    unmatched = [c for c in changes if not c["관련"] and is_relevant(c)]
     others = [c for c in changes if not c["관련"] and not is_relevant(c)]
 
     m1, m2, m3 = st.columns(3)
@@ -198,21 +197,11 @@ def law_change_tab(articles, text):
                     row["사유"] = "\n".join(filter(None, [row["사유"], reason(c)]))
                 st.text(a["내용"])
 
-    new_rows = []
-    if unmatched:
-        st.subheader("❔ 취업규칙에 관련 조항을 찾지 못한 개정")
-        st.caption("취업규칙에 둘 필요가 있는 내용이면 체크해 신설 조항 초안으로 넣으세요.")
-        for i, c in enumerate(unmatched):
-            with st.expander(header(c)):
-                law_diff(c)
-                if c["현재"] and st.checkbox("신설 조항으로 신구대조표에 추가", key=f"law-new-{i}"):
-                    new_rows.append({"구분": "신설", "조항": "", "현행": "", "개정안": draft_new_article(c),
-                                     "사유": reason(c)})
     if others:
         with st.expander(f"기타 개정 {len(others)}건 (벌칙·위원회 등 취업규칙과 관련이 적은 조문)"):
             for c in others:
                 st.markdown(f"- {header(c)}")
-    return list(picked.values()) + new_rows
+    return list(picked.values())
 
 
 def revision_tab(articles, required, findings, file_name, law_rows=()):
