@@ -118,9 +118,10 @@ def _sub_once(pattern, repl, text):
     return text[:m.start()] + repl + rest
 
 
-def _row(kind, label, current, revised, reason, position=None):
-    """position: 신설 조항을 넣을 자리(이 조항 다음). None이면 본칙 맨 끝."""
-    return {"구분": kind, "조항": label, "현행": current, "개정안": revised, "사유": reason, "위치": position}
+def _row(kind, label, current, revised, reason, position=None, basis=()):
+    """position: 신설 조항을 넣을 자리(이 조항 다음). None이면 본칙 맨 끝. basis: 근거 법령 [(법령명, 조문)]"""
+    return {"구분": kind, "조항": label, "현행": current, "개정안": revised, "사유": reason, "위치": position,
+            "근거": list(basis)}
 
 
 def _basis_text(basis):
@@ -152,12 +153,12 @@ def draft_rows(articles, required, findings):
         reason = f"{f['주제']}({_basis_text(f['근거'])})"
         if "new" in fix:
             near = [a["조항"] for a in articles if not a["부칙"] and "괴롭힘" in a["제목"] + a["내용"]]
-            new_rows.append(_row(NEW, "", "", fix["new"], reason, near[-1] if near else None))
+            new_rows.append(_row(NEW, "", "", fix["new"], reason, near[-1] if near else None, f["근거"]))
             continue
         article = by_label.get(f["조항"])
         if not article:
             continue
-        entry = changed.setdefault(article["조항"], [article["내용"], [], {}])
+        entry = changed.setdefault(article["조항"], [article["내용"], [], {}, []])
         if "pattern" in fix or "subs" in fix:
             # 같은 문장에 고칠 곳이 여럿이면 앞에서 고친 문장에 이어서 고친다
             current = entry[2].get(f["발췌"], f["발췌"])
@@ -171,9 +172,10 @@ def draft_rows(articles, required, findings):
         else:
             entry[0] = _append_item(entry[0], fix["add"])
         entry[1].append(reason)
+        entry[3].extend(f["근거"])
 
-    rows = [_row(CHANGE, label, by_label[label]["내용"], text, "\n".join(reasons))
-            for label, (text, reasons, _) in changed.items()]
+    rows = [_row(CHANGE, label, by_label[label]["내용"], text, "\n".join(reasons), basis=basis)
+            for label, (text, reasons, _, basis) in changed.items()]
     rows.sort(key=lambda r: articles.index(by_label[r["조항"]]))
 
     order = {a["조항"]: i for i, a in enumerate(articles)}

@@ -63,6 +63,25 @@ def show_law(db, law, label):
         st.caption(f"{law} {label}: 법령 데이터가 없습니다. download_laws.py를 다시 실행하세요.")
 
 
+def change_title(c):
+    """법령 개정 한 건의 제목: '⏳ 시행 예정 · 남녀고용평등법 제18조의2(배우자 출산휴가) [개정] — 시행 2025. 2. 23.'"""
+    when = ", ".join(f"{fmt(d)} {kind}".strip() for d, kind in c["이력"])
+    tag = "⏳ 시행 예정 · " if c["시행예정"] else ""
+    return f"{tag}{short_name(c['법령명'])} {c['조문']}({c['제목']}) [{c['구분']}] — 시행 {when}"
+
+
+def show_law_change(c):
+    """법 조문의 개정 전·후를 나란히 보여 준다 (바뀐 부분은 빨간 밑줄)."""
+    left, right = st.columns(2)
+    old_seg, new_seg = diff_segments(c["이전"], c["현재"])
+    with left:
+        st.markdown("**개정 전**")
+        st.markdown(diff_html(old_seg) if c["이전"] else "(없음)", unsafe_allow_html=True)
+    with right:
+        st.markdown("**개정 후**")
+        st.markdown(diff_html(new_seg) if c["현재"] else "(삭제)", unsafe_allow_html=True)
+
+
 def to_excel(articles, required, findings, revision_rows=()):
     req_rows = [{
         "번호": r["번호"], "항목": r["항목"], "상태": r["상태"],
@@ -107,6 +126,19 @@ def edit_rows(rows, prefix, body=()):
             if unchanged:
                 where = f" ({r['출처']})" if r.get("출처") else ""
                 st.warning(f"이 조항은 직접 고치려고 추가한 조항입니다{where}. 개정(안) 칸을 고쳐야 신구대조표와 개정 취업규칙에 들어갑니다.")
+            if r.get("법개정") or r.get("근거"):
+                with st.container(border=True):
+                    if r.get("법개정"):
+                        st.markdown("##### 📜 관련 법령이 이렇게 바뀌었습니다")
+                        for c in r["법개정"]:
+                            st.markdown(f"**{change_title(c)}**")
+                            show_law_change(c)
+                    shown = {(c["법령명"], c["조문"]) for c in r.get("법개정", [])}
+                    basis = [b for b in dict.fromkeys(r.get("근거", [])) if tuple(b) not in shown]
+                    if basis:
+                        st.markdown("##### 📜 근거 법령 (현행)")
+                        for law, label in basis:
+                            show_law(db, law, label)
             include = st.checkbox("신구대조표에 포함", value=True, key=f"{key}-on")
             left, right = st.columns(2)
             with left:
@@ -173,42 +205,29 @@ def law_change_tab(articles, text):
 
     picked = {}  # 취업규칙 조항 → 행
 
-    def law_diff(c):
-        left, right = st.columns(2)
-        old_seg, new_seg = diff_segments(c["이전"], c["현재"])
-        with left:
-            st.markdown("**개정 전**")
-            st.markdown(diff_html(old_seg) if c["이전"] else "(없음)", unsafe_allow_html=True)
-        with right:
-            st.markdown("**개정 후**")
-            st.markdown(diff_html(new_seg) if c["현재"] else "(삭제)", unsafe_allow_html=True)
-
-    def header(c):
-        when = ", ".join(f"{fmt(d)} {kind}".strip() for d, kind in c["이력"])
-        tag = "⏳ 시행 예정 · " if c["시행예정"] else ""
-        return f"{tag}{short_name(c['법령명'])} {c['조문']}({c['제목']}) [{c['구분']}] — 시행 {when}"
-
     def reason(c):
         return f"{short_name(c['법령명'])} {c['조문']} {c['구분']}({fmt(c['이력'][-1][0])} 시행)"
 
     st.subheader("📌 취업규칙에 관련 조항이 있는 개정")
     st.caption("법이 바뀐 내용을 보고, 고쳐야 할 취업규칙 조항을 체크하면 신구대조표에 들어갑니다.")
     for i, c in enumerate(related):
-        with st.expander(header(c), expanded=False):
-            law_diff(c)
+        with st.expander(change_title(c), expanded=False):
+            show_law_change(c)
             st.markdown("**관련 취업규칙 조항**")
             for label in c["관련"]:
                 a = next(x for x in body if x["조항"] == label)
                 if st.checkbox(f"{label}({a['제목']}) 신구대조표에 추가", key=f"law-{i}-{label}"):
                     row = picked.setdefault(label, {"구분": "개정", "조항": label, "현행": a["내용"],
-                                                    "개정안": a["내용"], "사유": "", "출처": "③ 법 개정 반영 탭에서 추가"})
+                                                    "개정안": a["내용"], "사유": "", "출처": "③ 법 개정 반영 탭에서 추가",
+                                                    "법개정": []})
                     row["사유"] = "\n".join(filter(None, [row["사유"], reason(c)]))
+                    row["법개정"].append(c)
                 st.text(a["내용"])
 
     if others:
         with st.expander(f"기타 개정 {len(others)}건 (벌칙·위원회 등 취업규칙과 관련이 적은 조문)"):
             for c in others:
-                st.markdown(f"- {header(c)}")
+                st.markdown(f"- {change_title(c)}")
     return list(picked.values())
 
 
@@ -223,6 +242,7 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
         for r in law_rows:  # '법 개정 반영' 탭에서 고른 조항
             if r["조항"] in by_label:
                 by_label[r["조항"]]["사유"] += "\n" + r["사유"]
+                by_label[r["조항"]]["법개정"] = by_label[r["조항"]].get("법개정", []) + r["법개정"]
             else:
                 rows.append(dict(r))
         body = [a for a in articles if not a["부칙"]]
@@ -313,29 +333,6 @@ def revision_tab(articles, required, findings, file_name, law_rows=()):
         else:
             st.caption("개정본 PDF와 비교하는 경우에는 올린 개정본이 곧 최종본이므로 따로 만들지 않습니다.")
     return table_rows
-
-    left, right = st.columns(2)
-    with left:
-        st.subheader("📄 신구대조표")
-        st.caption("현행 / 개정 안 / 비고 3칸 표 (A4 가로)")
-        title = st.text_input("신구대조표 제목", "취업규칙 신구대조표")
-        with_reason = st.checkbox("비고에 개정 사유 넣기", value=True)
-        highlight = st.checkbox("바뀐 부분 밑줄 표시", value=False)
-        st.download_button("📥 신구대조표 다운로드 (.docx)",
-                           data=to_docx(final, title, font=font, highlight=highlight, with_reason=with_reason),
-                           file_name=f"{base_name}_신구대조표.docx", mime=docx_mime, use_container_width=True)
-    with right:
-        st.subheader("📘 개정 취업규칙 초안")
-        if mode.startswith("점검"):
-            st.caption("현행 취업규칙 전체에 위 개정 내용을 반영한 문서 (A4 세로). 신설 조항은 본칙 끝에 이어 붙고 새 부칙이 추가됩니다.")
-            rules_title = st.text_input("초안 제목", "취업규칙 (개정안)")
-            mark = st.checkbox("개정·신설 조항을 색으로 표시", value=True)
-            st.download_button("📥 개정 취업규칙 초안 다운로드 (.docx)",
-                               data=to_rules_docx(articles, final, rules_title, font=font, mark=mark),
-                               file_name=f"{base_name}_개정안.docx", mime=docx_mime, use_container_width=True)
-        else:
-            st.caption("개정본 PDF와 비교하는 경우에는 올린 개정본이 곧 초안이므로 따로 만들지 않습니다.")
-    return final
 
 
 db = load_laws()
