@@ -1,5 +1,8 @@
 """신구대조표: 개정안 초안 작성, 개정본 비교, Word 내보내기."""
 
+# app.py가 같은 버전의 파일인지 확인하는 데 쓴다. 파일을 고칠 때마다 모든 파일에서 함께 올린다.
+VERSION = "2026-10-22"
+
 import difflib
 import html
 import io

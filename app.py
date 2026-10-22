@@ -3,6 +3,7 @@
 실행: python -m streamlit run app.py
 """
 
+import importlib
 import io
 from datetime import date, datetime
 from pathlib import Path
@@ -10,21 +11,35 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from checks import (MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required, check_violations,
-                    skipped_items)
-from law_changes import (detect_base_date, fmt, is_relevant, law_changes,
+st.set_page_config(page_title="취업규칙 검토", page_icon="📋", layout="wide")
+
+# 프로그램을 켜 둔 채 파일을 덮어쓰면 예전 코드가 메모리에 남을 수 있어, 실행할 때마다 다시 읽는다.
+# 그래도 버전이 다르면(일부 파일만 바뀐 경우) 오류 대신 안내를 보여 준다.
+APP_VERSION = "2026-10-22"
+import rule_parser, law_db, checks, law_changes, revision  # noqa: E401,E402  (다시 읽는 순서가 중요하다)
+for _module in (rule_parser, law_db, checks, law_changes, revision):
+    importlib.reload(_module)
+_stale = [m.__name__ + ".py" for m in (rule_parser, law_db, checks, law_changes, revision)
+          if getattr(m, "VERSION", None) != APP_VERSION]
+if _stale:
+    st.error("프로그램 파일 중 일부가 예전 버전입니다: " + ", ".join(_stale) + "\n\n"
+             "검은 창(run.bat)을 닫고, GitHub에서 ZIP을 다시 받아 **모든 파일을 덮어쓴 뒤** run.bat을 다시 실행하세요.")
+    st.stop()
+
+from checks import (MISSING, OK, PARTIAL, PRESENT, REVIEW, VIOLATION, check_required,  # noqa: E402
+                    check_violations, skipped_items)
+from law_changes import (detect_base_date, fmt, is_relevant, law_changes,  # noqa: E402
                          load_history, related_articles, short_name)
-from law_db import LawDB
-from revision import (DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows, numbered_rows,
-                      plan_rules, strip_internal_refs, to_docx, to_rules_docx)
-from rule_parser import detect_company, extract_text, split_articles
+from law_db import LawDB  # noqa: E402
+from revision import (DELETE, FONTS, NEW, compare_rows, diff_html, diff_segments, draft_rows,  # noqa: E402
+                      numbered_rows, plan_rules, strip_internal_refs, to_docx, to_rules_docx)
+from rule_parser import detect_company, extract_text, split_articles  # noqa: E402
 
 ICON = {PRESENT: "✅", PARTIAL: "⚠️", MISSING: "❌", VIOLATION: "🚨", REVIEW: "🔍", OK: "✅"}
 
 # 실행 위치와 상관없이 app.py 옆의 laws 폴더를 쓴다
 LAWS_DIR = Path(__file__).resolve().parent / "laws"
 
-st.set_page_config(page_title="취업규칙 검토", page_icon="📋", layout="wide")
 # 화면 글자 크기: Streamlit은 대부분 rem 단위를 쓰므로 기준 크기만 키우면 전체가 커진다
 st.markdown("""<style>
 html { font-size: 19px; }

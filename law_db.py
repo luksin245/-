@@ -1,5 +1,8 @@
 """download_laws.py로 내려받은 laws/*.json 법령 데이터를 읽는다."""
 
+# app.py가 같은 버전의 파일인지 확인하는 데 쓴다. 파일을 고칠 때마다 모든 파일에서 함께 올린다.
+VERSION = "2026-10-22"
+
 import json
 import re
 from pathlib import Path
