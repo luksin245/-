@@ -306,18 +306,19 @@ def revision_tab(articles, required, findings, file_name, law_rows=(), rules_tex
     else:
         table_rows = final
 
-    font = st.selectbox("글꼴 (모든 문서 공통)", FONTS,
-                        help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
+    c_font, c_company = st.columns(2)
+    font = c_font.selectbox("글꼴 (모든 문서 공통)", FONTS,
+                            help="함초롬바탕은 한글(한컴오피스)이 설치된 PC에 있습니다. 없으면 바탕을 고르세요.")
+    company = c_company.text_input("회사명 (모든 문서 공통)", detect_company(rules_text),
+                                   help="PDF 앞부분에서 찾은 이름입니다. 비우면 넣지 않습니다.")
+    today = date.today()
+    today_text = f"{today.year}. {today.month}. {today.day}."
     left, right = st.columns(2)
     with left:
         st.subheader("📄 신구대조표")
         st.caption("현행 / 개정 안 / 비고 3칸 표 (A4 가로)")
         title = st.text_input("신구대조표 제목", "취업규칙 신구대조표")
-        c1, c2 = st.columns(2)
-        today = date.today()
-        written = c1.text_input("작성일", f"{today.year}. {today.month}. {today.day}.",
-                                help="비우면 문서에 넣지 않습니다.")
-        company = c2.text_input("회사명", detect_company(rules_text), help="PDF 앞부분에서 찾은 이름입니다. 비우면 넣지 않습니다.")
+        written = st.text_input("작성일", today_text, help="비우면 문서에 넣지 않습니다.")
         with_reason = st.checkbox("비고에 개정 사유 넣기", value=True)
         highlight = st.checkbox("바뀐 부분 밑줄 표시", value=True)
         st.download_button("📥 신구대조표 다운로드 (.docx)",
@@ -327,18 +328,18 @@ def revision_tab(articles, required, findings, file_name, law_rows=(), rules_tex
     with right:
         st.subheader("📘 개정 취업규칙")
         if drafting:
-            st.caption("현행 취업규칙 전체에 위 내용을 반영한 문서 (A4 세로). 신설 조항은 고른 자리에 들어갑니다.")
-            rules_title = st.text_input("문서 제목", "취업규칙")
+            st.caption("표지(회사명·개정일) → 목차 → 본문 순서의 문서 (A4 세로). 신설 조항은 고른 자리에 들어갑니다.")
+            rules_title = st.text_input("문서 제목 (표지)", "취업규칙")
+            revised = st.text_input("개정일 (표지)", today_text, help="표지에 들어갑니다. 비우면 넣지 않습니다.")
             effective = st.text_input("개정 시행일 (새 부칙에 들어감)", placeholder="예: 2026. 12. 1.  (비우면 ○○○○년 ○월 ○일)")
-            with_toc = st.checkbox("맨 앞에 목차 넣기", value=True,
-                                   help="Word에서 열 때 '필드를 업데이트할까요?'에 '예'를 누르면 쪽 번호가 붙습니다.")
+            with_toc = st.checkbox("표지 다음에 목차 넣기", value=True)
             st.download_button("📥 검토용 초안 (개정 파란색·신설 초록색)",
-                               data=to_rules_docx(articles, seq, f"{rules_title} (개정안)", font=font, mark=True,
-                                                  effective=effective, toc=with_toc),
+                               data=to_rules_docx(articles, seq, rules_title, font=font, mark=True,
+                                                  effective=effective, toc=with_toc, company=company, revised=revised),
                                file_name=f"{base_name}_개정안_검토용.docx", mime=docx_mime, use_container_width=True)
             st.download_button("📥 최종본 (색 표시 없음)",
                                data=to_rules_docx(articles, seq, rules_title, font=font, mark=False, effective=effective,
-                                                  toc=with_toc),
+                                                  toc=with_toc, company=company, revised=revised),
                                file_name=f"{base_name}_개정_최종본.docx", mime=docx_mime, use_container_width=True,
                                type="primary")
         else:
